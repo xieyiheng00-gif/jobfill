@@ -156,6 +156,38 @@ class TestLearningLoop(unittest.TestCase):
         field = {"id": "p", "label": "Have you previously applied to Globex?", "type": "radio", "options": ["Yes", "No"]}
         self.assertEqual(self.resolve([field], app=second)[0]["value"], "Yes")
 
+    def test_internship_is_not_the_current_company(self):
+        # A student whose only ongoing work is an internship.
+        self.store.add_record("experience", {"company": "Acme Labs", "title": "ML Intern", "employment_type": "internship",
+                                             "start_date": "2026-09", "current": True})
+        fields = [
+            {"id": "c", "label": "Current company", "type": "text"},
+            {"id": "y", "label": "What is your current company?", "type": "text"},   # "your" is not "or"
+            {"id": "t", "label": "Current title", "type": "text"},
+            {"id": "e", "label": "Are you currently employed?", "type": "radio", "options": ["Yes", "No"]},
+            {"id": "r", "label": "Current or most recent employer", "type": "text"},
+        ]
+        out = {f["id"]: f for f in self.resolve(fields)}
+        self.assertEqual([out[k]["status"] for k in "cyt"], ["skipped"] * 3)
+        self.assertEqual(out["e"]["value"], "No")
+        self.assertEqual(out["r"]["value"], "Acme Labs")     # "most recent" may still name the internship
+        # A real job is the current company, ahead of the internship.
+        self.store.add_record("experience", {"company": "Globex", "title": "Data Engineer", "employment_type": "full_time",
+                                             "start_date": "2025-01", "current": True})
+        out = {f["id"]: f for f in self.resolve(fields)}
+        self.assertEqual([out[k]["value"] for k in "cyter"], ["Globex", "Globex", "Data Engineer", "Yes", "Globex"])
+
+    def test_finished_job_with_stale_current_flag(self):
+        exp = self.store.records("experience")[0]                # internship that ended 2026-08
+        self.store.update_record(exp["_id"], {"current": True})   # flag left on by mistake
+        out = {f["id"]: f for f in self.resolve([
+            {"id": "now", "label": "I currently work here", "type": "checkbox", "section": "experience", "index": 0},
+            {"id": "end", "label": "End date", "type": "text", "section": "experience", "index": 0},
+            {"id": "e", "label": "Are you currently employed?", "type": "radio", "options": ["Yes", "No"]}])}
+        self.assertIs(out["now"]["value"], False)
+        self.assertEqual(out["end"]["value"], "2026-08")
+        self.assertEqual(out["e"]["value"], "No")
+
     def test_skill_record_without_years_or_level_means_yes(self):
         # Resume imports store skills by name only; that must not read as "No".
         self.store.add_record("skill", {"name": "Docker"})

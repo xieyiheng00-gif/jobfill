@@ -253,7 +253,7 @@ def previously_employed_here(ctx, company_ref=None):
     target = _company_key(_target_company(ctx, company_ref))
     current_only = "current" in ctx.label and "former" not in ctx.label
     for r in ctx.records("experience"):
-        if _company_key(r.get("company", "")) == target and (r.get("current") or not current_only):
+        if _company_key(r.get("company", "")) == target and (is_current(r, ctx.today) or not current_only):
             return Answer(True, choices="bool")
     return Answer(False, choices="bool")
 
@@ -261,7 +261,7 @@ def previously_employed_here(ctx, company_ref=None):
 @rule
 def currently_employed_here(ctx):
     target = _company_key(ctx.company())
-    return Answer(any(_company_key(r.get("company", "")) == target and r.get("current")
+    return Answer(any(_company_key(r.get("company", "")) == target and is_current(r, ctx.today)
                       for r in ctx.records("experience")), choices="bool")
 
 
@@ -351,31 +351,49 @@ def gpa_for_level(ctx, level):
 
 # ---------------------------------------------------------------- experience & skills
 
+def is_current(r: dict, today: date) -> bool:
+    """Flagged current and not already over (a forgotten flag on a finished job does not count)."""
+    if not r.get("current"):
+        return False
+    end = parse_date(r.get("end_date"))
+    return not end or (end[0], end[1] or 12) >= (today.year, today.month)
+
+
+def _current_job(ctx) -> dict | None:
+    """The candidate's current employment. Internships are not a "current company" or "current job"."""
+    return next((r for r in ctx.records("experience")
+                 if is_current(r, ctx.today) and r.get("employment_type") != "internship"), None)
+
+
+# Whole words only: "your" or "for" must not read as "current OR most recent".
+_ASKS_RECENT = re.compile(r"\b(most recent|previous|latest|last|past)\b")
+
+
+def _current_or_recent(ctx) -> dict | None:
+    job = _current_job(ctx)
+    if job:
+        return job
+    exp = ctx.records("experience")
+    if exp and _ASKS_RECENT.search(ctx.label):
+        return exp[0]   # "current or most recent employer": the latest one, internships included
+    return None
+
+
 @rule
 def current_employer(ctx):
-    exp = ctx.records("experience")
-    current = [r for r in exp if r.get("current")]
-    if current:
-        return Answer(current[0]["company"])
-    if exp and any(w in ctx.label for w in ("most recent", "previous", "or")):
-        return Answer(exp[0]["company"])
-    return Answer(None)
+    job = _current_or_recent(ctx)
+    return Answer(job.get("company") if job else None)
 
 
 @rule
 def current_title(ctx):
-    exp = ctx.records("experience")
-    current = [r for r in exp if r.get("current")]
-    if current:
-        return Answer(current[0].get("title"))
-    if exp and any(w in ctx.label for w in ("most recent", "previous", "or")):
-        return Answer(exp[0].get("title"))
-    return Answer(None)
+    job = _current_or_recent(ctx)
+    return Answer(job.get("title") if job else None)
 
 
 @rule
 def currently_employed(ctx):
-    return Answer(any(r.get("current") for r in ctx.records("experience")), choices="bool")
+    return Answer(_current_job(ctx) is not None, choices="bool")
 
 
 @rule

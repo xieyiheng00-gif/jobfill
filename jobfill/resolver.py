@@ -24,7 +24,7 @@ import re
 from datetime import date
 
 from .catalog import RECORD_KINDS, choice_set
-from .derive import RULES, Answer, Ctx, NeedFact, NeedUser, _degree_level, lacks_skill
+from .derive import RULES, Answer, Ctx, NeedFact, NeedUser, _degree_level, is_current, lacks_skill
 from .matcher import Matcher
 from .text import (choose_enum_option, choose_range_option, choose_text_option, format_date, normalize,
                    option_label)
@@ -169,8 +169,11 @@ class Resolver:
         if fname == "description" and kind == "experience":
             parts = [r.get("summary", "")] + [f"- {h}" for h in r.get("highlights", [])]
             return Answer("\n".join(p for p in parts if p) or None, source=src)
-        if fname == "end_date" and (r.get("current") or (kind == "education" and r.get("expected") and not r.get("end_date"))):
+        ongoing = is_current(r, self.today) if kind == "experience" else False
+        if fname == "end_date" and (ongoing or (kind == "education" and r.get("expected") and not r.get("end_date"))):
             return Answer(None, source=src)
+        if fname == "current" and kind == "experience":
+            return Answer(ongoing, choices="bool", source=src)
         if fname in ("current", "expected", "may_contact"):
             return Answer(bool(r.get(fname)), choices="bool", source=src)
         if fname == "degree_level" or (fname == "degree" and field.get("options")):
@@ -303,10 +306,17 @@ def build_ai_context(store, app: dict | None, keys: set[str], themes: set[str]) 
     cand: dict = {"name": " ".join(x for x in (name, f("identity.last_name")) if x)}
     edu = store.records("education")
     exp = store.records("experience")
-    if exp and exp[0].get("current"):
-        cand["now"] = f"{exp[0].get('title')} at {exp[0].get('company')}"
+    today = date.today()
+    job = next((r for r in exp if is_current(r, today) and r.get("employment_type") != "internship"), None)
+    intern = next((r for r in exp if is_current(r, today) and r.get("employment_type") == "internship"), None)
+    if job:
+        cand["now"] = f"{job.get('title')} at {job.get('company')}"
     elif edu and edu[0].get("expected"):
         cand["now"] = f"{edu[0].get('degree')} student at {edu[0].get('school')}, graduating {edu[0].get('end_date')}"
+        if intern:
+            cand["now"] += f"; currently interning as {intern.get('title')} at {intern.get('company')}"
+    elif intern:
+        cand["now"] = f"Intern: {intern.get('title')} at {intern.get('company')}"
     simple = {"motivations": "profile.motivations", "career_goals": "profile.career_goals",
               "strengths": "profile.strengths", "weaknesses": "profile.weaknesses",
               "work_style": "profile.work_style", "interests": "profile.interests"}
