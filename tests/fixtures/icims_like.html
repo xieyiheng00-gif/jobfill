@@ -1,0 +1,10 @@
+<!doctype html>
+<html><head><meta charset="utf-8"><title>Login - Initech Careers</title></head>
+<body>
+<!-- Mirrors the iCIMS email gate (/jobs/<id>/<slug>/login?in_iframe=1): email, GDPR box, Next. -->
+<form id="emailForm" onsubmit="event.preventDefault(); document.body.dataset.submitted = document.getElementById('email').value;">
+  <label for="email">Email Address</label><input type="email" id="email" name="loginName">
+  <label><input type="checkbox" id="accept_gdpr" name="accept_gdpr" value="1"> I accept the privacy policy</label>
+  <input type="submit" id="enterEmailSubmitButton" value="Next">
+</form>
+</body></html>

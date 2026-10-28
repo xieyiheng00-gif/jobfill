@@ -1,0 +1,58 @@
+<!doctype html>
+<html><head><meta charset="utf-8"><title>Research Engineer @ Acme AI</title>
+<style>.hidden-input { position: absolute; opacity: 0; width: 1px; height: 1px; }</style></head>
+<body>
+<!-- Structure mirrors jobs.ashbyhq.com/<company>/<id>/application (2026): field entries, fieldset labels,
+     yes/no toggle buttons with a hidden checkbox, one-name-per-checkbox groups. -->
+<div class="ashby-application-form-container">
+  <div class="ashby-application-form-autofill-pane"><p>Autofill from resume</p>
+    <input type="file" style="display:none"><button type="button">Upload file</button></div>
+
+  <div class="ashby-application-form-field-entry"><label class="ashby-application-form-question-title _required_x" for="_systemfield_name">Name</label>
+    <input id="_systemfield_name" name="_systemfield_name" type="text" required></div>
+  <div class="ashby-application-form-field-entry"><label class="ashby-application-form-question-title _required_x" for="_systemfield_email">Email</label>
+    <input id="_systemfield_email" name="_systemfield_email" type="email" required></div>
+  <div class="ashby-application-form-field-entry"><label class="ashby-application-form-question-title _required_x" for="_systemfield_resume">Resume</label>
+    <div><button type="button">Upload File</button><input id="_systemfield_resume" type="file" style="display:none"></div></div>
+
+  <div class="ashby-application-form-field-entry" data-field-path="question_1">
+    <label class="ashby-application-form-question-title _required_x" for="question_1">Are you able to work from our San Francisco HQ 3 days per week?</label>
+    <div class="ashby-application-form-input-yesno">
+      <button class="ashby-application-form-input-yesno-option" aria-pressed="false" data-option="yes" type="button">Yes</button>
+      <button class="ashby-application-form-input-yesno-option" aria-pressed="false" data-option="no" type="button">No</button>
+      <input type="checkbox" class="hidden-input" tabindex="-1" name="question_1"></div></div>
+
+  <div class="ashby-application-form-field-entry" data-field-path="question_2[]"><fieldset>
+    <label class="ashby-application-form-question-title" for="question_2[]">How did you hear about Acme AI?</label>
+    <div><span><input type="checkbox" id="q2-0" name="LinkedIn"></span><label for="q2-0">LinkedIn</label></div>
+    <div><span><input type="checkbox" id="q2-1" name="Twitter"></span><label for="q2-1">Twitter</label></div>
+    <div><span><input type="checkbox" id="q2-2" name="Other"></span><label for="q2-2">Other</label></div>
+  </fieldset></div>
+
+  <div class="ashby-application-form-field-entry"><label class="ashby-application-form-question-title _required_x" for="question_3">When can you start a new role?</label>
+    <input id="question_3" name="question_3" type="text"></div>
+
+  <div class="ashby-application-form-field-entry" data-field-path="_systemfield_eeoc_gender"><fieldset>
+    <label for="_systemfield_eeoc_gender">Gender</label><div><p>Input gender</p></div>
+    <div><span><input type="radio" id="g-0" name="eeoc_gender"></span><label for="g-0">Male</label></div>
+    <div><span><input type="radio" id="g-1" name="eeoc_gender"></span><label for="g-1">Female</label></div>
+    <div><span><input type="radio" id="g-2" name="eeoc_gender"></span><label for="g-2">Decline to self-identify</label></div>
+  </fieldset></div>
+  <div class="ashby-application-form-field-entry" data-field-path="_systemfield_eeoc_veteran_status"><fieldset>
+    <label for="_systemfield_eeoc_veteran_status">Veteran Status</label>
+    <div><span><input type="radio" id="v-0" name="eeoc_veteran"></span><label for="v-0">I am a veteran or active member of the military and identify as one or more of the classifications of protected veterans</label></div>
+    <div><span><input type="radio" id="v-1" name="eeoc_veteran"></span><label for="v-1">I am not a protected veteran</label></div>
+    <div><span><input type="radio" id="v-2" name="eeoc_veteran"></span><label for="v-2">I don't wish to answer</label></div>
+  </fieldset></div>
+
+  <button class="ashby-application-form-submit-button" type="button">Submit Application</button>
+</div>
+<script>
+document.querySelectorAll(".ashby-application-form-input-yesno").forEach((box) => {
+  box.querySelectorAll("button").forEach((b) => b.addEventListener("click", () => {
+    box.querySelectorAll("button").forEach((x) => x.setAttribute("aria-pressed", String(x === b)));
+    box.querySelector("input").checked = b.dataset.option === "yes";
+  }));
+});
+</script>
+</body></html>

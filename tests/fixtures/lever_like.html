@@ -1,0 +1,74 @@
+<!doctype html>
+<html><head><meta charset="utf-8"><title>Data Engineer - Globex</title></head>
+<body>
+<!-- Structure mirrors jobs.lever.co/<company>/<id>/apply: labels wrap whole questions, custom "cards". -->
+<form id="application-form" action="/globex/123/apply" method="POST">
+<ul>
+  <li class="application-question resume"><label>
+    <div class="application-label">Resume/CV <span class="required">&#10033;</span></div>
+    <div class="application-field"><a class="visible-resume-upload"><span class="default-label">Attach resume/CV</span>
+      <span class="loading-label" style="display:none">Analyzing resume...</span></a>
+      <input type="file" name="resume" id="resume-upload-input" style="display:none"></div></label></li>
+  <li class="application-question"><label><div class="application-label">Full name<span class="required">&#10033;</span></div>
+    <div class="application-field"><input type="text" name="name" required></div></label></li>
+  <li class="application-question"><label><div class="application-label">Email<span class="required">&#10033;</span></div>
+    <div class="application-field"><input type="email" name="email" required></div></label></li>
+  <li class="application-question"><label><div class="application-label">Phone</div>
+    <div class="application-field"><input type="text" name="phone"></div></label></li>
+  <li class="application-question"><label><div class="application-label">Current location <span class="required">&#10033;</span></div>
+    <div class="application-field"><input type="text" name="location" id="location-input" autocomplete="off">
+      <div class="dropdown-container" style="display:none">No location found. Try entering a different location</div>
+      <div class="dropdown-results"></div></div></label></li>
+  <li class="application-question"><label><div class="application-label">Current company</div>
+    <div class="application-field"><input type="text" name="org"></div></label></li>
+  <li class="application-question"><label><div class="application-label">LinkedIn URL</div>
+    <div class="application-field"><input type="text" name="urls[LinkedIn]"></div></label></li>
+  <li class="application-question"><label><div class="application-label">GitHub URL</div>
+    <div class="application-field"><input type="text" name="urls[GitHub]"></div></label></li>
+
+  <li class="application-question custom-question">
+    <div class="application-label full-width"><div class="text">Are you legally authorized to work in the country for which you are applying?<span class="required">&#10033;</span></div></div>
+    <div class="application-field full-width"><ul data-qa="multiple-choice">
+      <li><label><input type="radio" name="cards[aaa][field0]" value="Yes"><span class="application-answer-alternative">Yes</span></label></li>
+      <li><label><input type="radio" name="cards[aaa][field0]" value="No"><span class="application-answer-alternative">No</span></label></li>
+    </ul></div></li>
+  <li class="application-question custom-question">
+    <div class="application-label full-width"><div class="text">Will you now or in the future require sponsorship for employment visa status (e.g. H-1B)?<span class="required">&#10033;</span></div></div>
+    <div class="application-field full-width"><ul data-qa="multiple-choice">
+      <li><label><input type="radio" name="cards[bbb][field0]" value="Yes"><span class="application-answer-alternative">Yes</span></label></li>
+      <li><label><input type="radio" name="cards[bbb][field0]" value="No"><span class="application-answer-alternative">No</span></label></li>
+    </ul></div></li>
+  <li class="application-question custom-question">
+    <div class="application-label full-width"><div class="text">Language Skill(s) (Check all that apply)<span class="required">&#10033;</span></div></div>
+    <div class="application-field full-width"><ul data-qa="checkboxes">
+      <li><label><input type="checkbox" name="cards[ccc][field0]" value="English (ENG)"><span>English (ENG)</span></label></li>
+      <li><label><input type="checkbox" name="cards[ccc][field0]" value="Spanish (SPA)"><span>Spanish (SPA)</span></label></li>
+      <li><label><input type="checkbox" name="cards[ccc][field0]" value="French (FRA)"><span>French (FRA)</span></label></li>
+    </ul></div></li>
+  <li class="application-question custom-question">
+    <div class="application-label full-width"><div class="text">Why do you want to work at Globex?</div></div>
+    <div class="application-field full-width"><textarea name="cards[ddd][field0]"></textarea></div></li>
+
+  <li class="application-question"><label><div class="application-label">Veteran status</div>
+    <div class="application-field"><select name="eeo[veteran]"><option value="">Select ...</option>
+      <option value="Veteran">I am a veteran</option><option value="Not a veteran">I am not a veteran</option>
+      <option value="Decline">Decline to self-identify</option></select></div></label></li>
+  <li class="application-question"><label><div class="application-label">Additional information</div>
+    <textarea name="comments" id="additional-information"></textarea></label></li>
+</ul>
+<button type="submit" id="btn-submit">Submit application</button>
+</form>
+<script>
+// Lever-style location autocomplete: suggestions appear under the input.
+const loc = document.getElementById("location-input");
+const results = document.querySelector(".dropdown-results");
+loc.addEventListener("input", () => {
+  results.innerHTML = "";
+  if (loc.value.length < 3) return;
+  const d = document.createElement("div"); d.className = "dropdown-location";
+  d.textContent = "Madison, Wisconsin, United States";
+  d.addEventListener("click", () => { loc.value = d.textContent; results.innerHTML = ""; });
+  results.appendChild(d);
+});
+</script>
+</body></html>

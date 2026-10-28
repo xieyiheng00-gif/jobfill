@@ -1,0 +1,19 @@
+[build-system]
+requires = ["setuptools>=68"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "jobfill"
+version = "0.1.0"
+description = "Tiered answer database for job application forms: plain Python first, AI only for what must be written fresh."
+requires-python = ">=3.10"
+dependencies = []
+
+[project.optional-dependencies]
+apply = ["playwright>=1.44"]
+
+[project.scripts]
+jobfill = "jobfill.cli:main"
+
+[tool.setuptools.packages.find]
+include = ["jobfill*"]

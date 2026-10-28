@@ -1,0 +1,99 @@
+{
+  "source": "example:fictional-candidate",
+  "facts": {
+    "identity.first_name": "Jordan",
+    "identity.last_name": "Rivera",
+    "identity.preferred_name": "Jo",
+    "identity.pronouns": "they/them",
+    "contact.email": "jordan.rivera@example.com",
+    "contact.phone": "608-555-0142",
+    "contact.phone_country_code": "+1",
+    "contact.phone_type": "mobile",
+    "contact.linkedin": "https://www.linkedin.com/in/jordan-rivera-example",
+    "contact.github": "https://github.com/jrivera-example",
+    "address.line1": "123 Example St Apt 4",
+    "address.city": "Madison",
+    "address.state": "WI",
+    "address.postal_code": "53703",
+    "address.country": "United States",
+    "work_auth.primary_country": "United States",
+    "work_auth.authorized_countries": ["United States"],
+    "work_auth.citizenship": ["Mexico"],
+    "work_auth.us_status": "f1_opt",
+    "work_auth.visa_detail": "F-1 OPT after graduation (May 2027), eligible for the 24-month STEM extension; will need H-1B sponsorship afterwards.",
+    "work_auth.requires_sponsorship_now": false,
+    "work_auth.requires_sponsorship_future": true,
+    "work_auth.security_clearance": "none",
+    "eeo.gender": "non_binary",
+    "eeo.race": ["decline"],
+    "eeo.hispanic_latino": "yes",
+    "eeo.veteran_status": "not_veteran",
+    "eeo.disability_status": "decline",
+    "legal.is_18_plus": true,
+    "legal.criminal_conviction": false,
+    "legal.background_check_ok": true,
+    "legal.non_compete": false,
+    "legal.relatives_at_companies": [],
+    "consent.certify_accuracy": true,
+    "consent.privacy_ack": true,
+    "comp.currency": "USD",
+    "comp.salary_expectation_text": "USD 120,000-140,000 base, flexible depending on the full package",
+    "comp.salary_min_annual": 115000,
+    "comp.salary_target_annual": 130000,
+    "availability.earliest_start": "2027-06-01",
+    "availability.notice_period": "Available after graduation",
+    "prefs.willing_to_relocate": true,
+    "prefs.preferred_locations": ["San Francisco, CA", "Seattle, WA", "New York, NY"],
+    "prefs.work_arrangements": ["onsite", "hybrid"],
+    "prefs.employment_types": ["full_time"],
+    "source.how_heard_default": "LinkedIn",
+    "documents.resume_path": "documents/resume/jordan_rivera_resume.pdf",
+    "profile.headline": "M.S. Computer Science student | ML systems and data infrastructure",
+    "profile.summary": "M.S. Computer Science student at UW-Madison graduating May 2027. Built a feature store prototype during a data engineering internship that cut model training data prep from hours to minutes, and a distributed training benchmark as a course project.",
+    "profile.motivations": "Building infrastructure that makes ML teams faster; small teams with real ownership; products used by many people.",
+    "profile.career_goals": "Grow into a senior ML infrastructure engineer who owns systems end to end.",
+    "profile.writing_style": "Plain and direct. No buzzwords, no em dashes."
+  },
+  "records": {
+    "education": [
+      {"school": "University of Wisconsin-Madison", "degree": "Master of Science", "degree_level": "master",
+       "field_of_study": "Computer Science", "start_date": "2025-09", "end_date": "2027-05", "expected": true,
+       "gpa": "3.8", "gpa_scale": "4.0", "location": "Madison, WI"},
+      {"school": "Universidad Nacional Autonoma de Mexico", "degree": "Bachelor of Science", "degree_level": "bachelor",
+       "field_of_study": "Computer Engineering", "start_date": "2020-08", "end_date": "2025-05", "gpa": "9.1",
+       "gpa_scale": "10", "location": "Mexico City, Mexico"}
+    ],
+    "experience": [
+      {"company": "Example Analytics", "title": "Data Engineering Intern", "employment_type": "internship",
+       "location": "Chicago, IL", "start_date": "2026-06", "end_date": "2026-08",
+       "summary": "Built internal data tooling for the ML platform team.",
+       "highlights": ["Prototyped a feature store that cut training data prep from about 3 hours to 10 minutes",
+                      "Wrote Airflow DAGs and data quality checks for 40+ tables"],
+       "skills": ["Python", "Airflow", "SQL"]}
+    ],
+    "project": [
+      {"name": "Distributed Training Benchmark", "role": "Sole developer", "ownership": "sole", "is_coursework": true,
+       "start_date": "2026-01", "end_date": "2026-05",
+       "summary": "Benchmarked data-parallel vs. pipeline-parallel training on a 4-GPU cluster.",
+       "tech": ["PyTorch", "NCCL", "Kubernetes"], "url": "https://github.com/jrivera-example/dist-bench"}
+    ],
+    "skill": [
+      {"name": "Python", "years": 5, "level": "advanced"},
+      {"name": "SQL", "years": 3, "level": "advanced"},
+      {"name": "PyTorch", "years": 2, "level": "intermediate"},
+      {"name": "Kubernetes", "years": 1, "level": "beginner", "aliases": ["k8s"]},
+      {"name": "Go", "years": 0, "level": "none"}
+    ],
+    "language": [
+      {"name": "Spanish", "proficiency": "native"},
+      {"name": "English", "proficiency": "fluent"}
+    ],
+    "story": [
+      {"title": "Learning Airflow in a week", "themes": ["learning", "pressure"],
+       "situation": "Internship team needed a backfill pipeline before a model review.",
+       "task": "I had never used Airflow and had one week.",
+       "action": "Read the team's existing DAGs, paired with a senior engineer for one session, shipped a small DAG on day 3 and iterated.",
+       "result": "Backfill ran on time; the DAG template is now used for new tables.", "source": "Example Analytics internship"}
+    ]
+  }
+}

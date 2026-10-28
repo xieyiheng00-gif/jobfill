@@ -1,0 +1,29 @@
+# Personal data: the profile database, import patches, drafted answers, saved postings.
+data/
+
+# Candidate documents (resume, transcripts, LinkedIn export...). Only the README and
+# folder placeholders are tracked.
+documents/**
+!documents/README.md
+!documents/*/
+!documents/*/.gitkeep
+!documents/*/*/
+!documents/*/*/.gitkeep
+
+# Python
+__pycache__/
+*.pyc
+.venv/
+venv/
+*.egg-info/
+build/
+dist/
+
+# Editors / OS
+.vscode/
+.idea/
+.DS_Store
+Thumbs.db
+
+# Claude Code local files
+.claude/settings.local.json

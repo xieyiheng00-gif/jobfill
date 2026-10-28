@@ -1,0 +1,100 @@
+<!doctype html>
+<html><head><meta charset="utf-8"><title>Software Engineer - Acme Robotics</title>
+<style>
+  .visually-hidden { position: absolute; width: 1px; height: 1px; overflow: hidden; clip: rect(0 0 0 0); }
+  [role=listbox] { border: 1px solid #ccc; }
+  [role=option] { padding: 2px; cursor: pointer; }
+  .requiredInput { opacity: 0; width: 1px; height: 1px; position: absolute; }
+</style></head>
+<body>
+<!-- Structure mirrors job-boards.greenhouse.io (React form with React-Select dropdowns). -->
+<h1>Software Engineer</h1>
+<form id="application-form">
+  <div class="field-wrapper"><label for="first_name" id="first_name-label" class="label">First Name<span aria-hidden="true">*</span></label>
+    <input id="first_name" type="text" aria-required="true"></div>
+  <div class="field-wrapper"><label for="last_name" class="label">Last Name<span aria-hidden="true">*</span></label>
+    <input id="last_name" type="text" aria-required="true"></div>
+  <div class="field-wrapper"><label for="email" class="label">Email<span>*</span></label><input id="email" type="text"></div>
+
+  <div class="select__container"><label id="country-label" for="country" class="label select__label">Country<span>*</span></label>
+    <div class="select__control"><div class="select__single-value"></div>
+      <input class="select__input" id="country" role="combobox" aria-labelledby="country-label" aria-controls="country-list" autocomplete="off"></div>
+    <input required tabindex="-1" aria-hidden="true" class="requiredInput" value="">
+    <div id="country-list" role="listbox" style="display:none"></div></div>
+  <div class="field-wrapper"><label for="phone" class="label">Phone<span>*</span></label><input id="phone" type="tel"></div>
+
+  <div role="group" aria-labelledby="upload-label-resume" class="file-upload">
+    <div id="upload-label-resume" class="label upload-label">Resume/CV<span class="required">*</span></div>
+    <div class="file-upload__wrapper"><div class="button-container"><div>
+      <button type="button" class="btn">Attach</button><label class="visually-hidden" for="resume">Attach</label>
+      <input id="resume" class="visually-hidden" type="file" accept=".pdf"></div></div></div></div>
+
+  <div class="field-wrapper"><label for="question_1" class="label">LinkedIn Profile</label><input id="question_1" type="text"></div>
+  <div class="select__container"><label id="question_2-label" for="question_2" class="label select__label">Will you now or will you in the future require employment visa sponsorship?*</label>
+    <div class="select__control"><div class="select__single-value"></div>
+      <input class="select__input" id="question_2" role="combobox" aria-labelledby="question_2-label" aria-controls="question_2-list"></div>
+    <input required tabindex="-1" aria-hidden="true" class="requiredInput" value="">
+    <div id="question_2-list" role="listbox" style="display:none"></div></div>
+  <div class="field-wrapper"><label for="question_3" class="label">Why Acme Robotics?*</label><textarea id="question_3" maxlength="2000"></textarea></div>
+  <div class="field-wrapper"><label for="question_4" class="label">What is your favorite color?</label><input id="question_4" type="text"></div>
+
+  <div class="education--container">
+    <div class="select__container"><label id="school--0-label" for="school--0" class="label">School</label>
+      <div class="select__control"><div class="select__single-value"></div>
+        <input id="school--0" role="combobox" aria-labelledby="school--0-label" aria-controls="school--0-list"></div>
+      <div id="school--0-list" role="listbox" style="display:none"></div></div>
+    <div class="select__container"><label id="degree--0-label" for="degree--0" class="label">Degree</label>
+      <div class="select__control"><div class="select__single-value"></div>
+        <input id="degree--0" role="combobox" aria-labelledby="degree--0-label" aria-controls="degree--0-list"></div>
+      <div id="degree--0-list" role="listbox" style="display:none"></div></div>
+  </div>
+
+  <div class="eeoc">
+    <div class="select__container"><label id="gender-label" for="gender" class="label">Gender</label>
+      <div class="select__control"><div class="select__single-value"></div>
+        <input id="gender" role="combobox" aria-labelledby="gender-label" aria-controls="gender-list"></div>
+      <div id="gender-list" role="listbox" style="display:none"></div></div>
+    <div class="select__container"><label id="hisp-label" for="hispanic_ethnicity" class="label">Are you Hispanic/Latino?</label>
+      <div class="select__control"><div class="select__single-value"></div>
+        <input id="hispanic_ethnicity" role="combobox" aria-labelledby="hisp-label" aria-controls="hisp-list"></div>
+      <div id="hisp-list" role="listbox" style="display:none"></div></div>
+    <div id="race-slot"></div>
+  </div>
+  <div class="field-wrapper"><input type="checkbox" id="certify"><label for="certify">I certify that the information I have provided is true and complete.</label></div>
+  <button type="submit">Submit application</button>
+</form>
+<script>
+// Minimal React-Select stand-in: options render in a listbox while the input is focused/typed in.
+function combo(id, options, asyncSearch) {
+  const input = document.getElementById(id);
+  const list = document.getElementById(input.getAttribute("aria-controls"));
+  const shown = input.parentElement.querySelector(".select__single-value");
+  const render = () => {
+    const q = input.value.toLowerCase();
+    const opts = asyncSearch ? (q.length >= 3 ? options.filter(o => o.toLowerCase().includes(q.split(/[ ,]/)[0])) : [])
+                             : options.filter(o => o.toLowerCase().includes(q));
+    list.innerHTML = "";
+    opts.forEach(o => { const d = document.createElement("div"); d.setAttribute("role", "option"); d.textContent = o;
+      d.addEventListener("click", () => { shown.textContent = o; input.value = ""; list.style.display = "none";
+        input.dispatchEvent(new CustomEvent("picked", {detail: o})); });
+      list.appendChild(d); });
+    list.style.display = opts.length ? "block" : "none";
+  };
+  input.addEventListener("click", render); input.addEventListener("input", render);
+  input.addEventListener("keydown", e => { if (e.key === "Escape") list.style.display = "none"; });
+}
+combo("country", ["Canada +1", "Mexico +52", "United States +1"]);
+combo("question_2", ["Yes", "No"]);
+combo("school--0", ["University of Wisconsin - Madison", "University of Washington", "Universidad de Guadalajara"], true);
+combo("degree--0", ["Bachelor's Degree", "Master's Degree", "Doctor of Philosophy (Ph.D.)"]);
+combo("gender", ["Male", "Female", "Non-binary", "Decline To Self Identify"]);
+combo("hispanic_ethnicity", ["Yes", "No", "Decline To Self Identify"]);
+// Like Greenhouse: the race question only appears after answering "No" to Hispanic/Latino.
+document.getElementById("hispanic_ethnicity").addEventListener("picked", (e) => {
+  if (e.detail !== "No" || document.getElementById("race")) return;
+  document.getElementById("race-slot").innerHTML =
+    '<label for="race">Race</label><select id="race"><option value="">Select...</option><option>Asian</option>' +
+    '<option>White</option><option>Decline To Self Identify</option></select>';
+});
+</script>
+</body></html>

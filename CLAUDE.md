@@ -1,0 +1,50 @@
+# jobfill - agent instructions
+
+jobfill fills job application forms from a local SQLite answer database. Plain Python answers
+everything it recognizes; you (the agent) handle only what it hands back: questions the candidate
+must answer once, new questions to classify, and tier-3 answers that must be written per application.
+
+## Workflows (canonical, shared with every agent runtime)
+
+| Command | File | When |
+|---|---|---|
+| `/setup` | `.claude/commands/setup.md` | First run: import documents, collect facts, write base material |
+| `/apply` | `.claude/commands/apply.md` | `/apply <job URL>`: detect the system, auto-fill (Greenhouse/Lever/iCIMS/Ashby in Python, other portals in the built-in browser) |
+| `/fill`  | `.claude/commands/fill.md`  | Answer a form given as field JSON: resolve, ask gaps, write tier-3 answers |
+| `/learn` | `.claude/commands/learn.md` | Classify questions the bank did not recognize |
+| `/update`| `.claude/commands/update.md`| New project/job/skill, changed visa, stale tier-2 facts |
+
+## The three tiers
+
+1. **Static** (identity, contact, work authorization, EEO, legal, consents, education): asked once.
+2. **Evolving** (skills, projects, experience, compensation, availability, preferences): stored,
+   with review intervals so stale values get re-confirmed.
+3. **Generated** ("why this company", "tell us about yourself", behavioral): never stored as a
+   reusable answer. Written per application from a compact context; logged per application.
+
+## Rules
+
+- Use the CLI (`python -m jobfill ...`) for every read and write. No raw SQL against `data/jobfill.db`.
+- Personal data lives only in `data/` and `documents/` (both gitignored). Put patches, drafts and
+  saved postings under `data/`. Never write candidate data into tracked files.
+- Never infer sensitive facts (EEO, criminal record, citizenship, visa/sponsorship, date of birth,
+  salary) from documents or names. Ask; "decline" is a valid EEO answer.
+- Tier-3 answers: use only the `ai_task` + `ai_context` that `resolve`/`context` return. Do not load
+  the whole profile; the point of jobfill is to keep those prompts small.
+- Ground every written claim in stored data. If the data cannot support an answer, ask.
+- Never submit an application without the candidate's explicit confirmation. Never type passwords
+  or solve CAPTCHAs; the candidate does those in the browser window.
+
+## Development
+
+- Python 3.10+. The core is standard library only; `/apply`'s filler needs Playwright
+  (`pip install playwright` then `python -m playwright install chromium`).
+  Tests: `python -m unittest discover -s tests -t .` (browser tests skip without Playwright).
+- Filler code: `jobfill/apply/` (`detect.py` system detection, `extract.js` + `forms.py` generic field
+  reading/filling, `adapters.py` per-ATS quirks, `runner.py` commands, `browser.py` shared window).
+- Result record: every question of an application is a row in `answers` (status, source, fill);
+  `jobfill/report.py` turns it into `data/applications/app<ID>_*.md|json` and `app stats`.
+- Built-in catalog: `jobfill/catalog/` (`facts.py`, `records.py`, `choices.py`, `questions.py`).
+  `python -m jobfill init` re-seeds it into existing databases without touching learned rows.
+- Adding a built-in question: add it to `questions.py`, add a real-world label to `CASES` in
+  `tests/test_matcher.py`, run the tests (they also reject alias collisions between questions).

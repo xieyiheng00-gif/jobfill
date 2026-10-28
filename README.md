@@ -1,0 +1,193 @@
+# jobfill
+
+A local answer database for job application forms. Plain Python answers the questions it knows;
+an AI agent (Claude Code, Codex, ...) is called only for the few answers that must be written for
+each application, and it gets a small, targeted context instead of your whole profile.
+
+```
+form fields ──► matcher ──► question bank ──► answer strategy ──► value for the form
+ (labels,        exact alias      ~185 types       fact / template /        filled  (no tokens)
+  options,       regex pattern    ~1,500           derived rule / record
+  section)       fuzzy score      phrasings        ── ai ──────────────────► needs_ai  (compact context)
+                     │                            missing fact ───────────► needs_user (asked once, stored)
+                     └── unknown ──► pending queue ──► /learn ──► new alias / question (python next time)
+```
+
+## The three tiers
+
+| Tier | What | Examples | How it's answered | Changes |
+|---|---|---|---|---|
+| **1 static** | Facts that essentially never change | name, contact, work authorization, sponsorship, EEO, veteran/disability, 18+, background check, education | stored fact or plain-Python rule | asked once at setup |
+| **2 evolving** | Facts and records that change over months | skills + years, projects, experience, salary, start date, relocation, preferred locations, resume file, STAR stories | stored fact, record, or rule over records | each fact has a review interval; `status` flags stale ones |
+| **3 generated** | Answers that must be unique to the application | why this company, why this role, tell us about yourself, behavioral, cover letter | written by the agent from `ai_task` + `ai_context`; logged per application | never stored as a reusable answer |
+
+Tier-3 details:
+
+- `mode: unique` answers are written fresh from facts + the posting. Answers given to other
+  companies are never shown to the model, so they cannot be recycled.
+- `mode: adapt` answers tailor stored base material (STAR stories, summary, strengths).
+- `scope` controls reuse: `company` (e.g. "why us" when the same company asks again for another
+  role) or `application` (e.g. "why this role": never reused).
+
+Rules derive answers instead of storing every variant: "Are you authorized to work in Canada?",
+"Will you now or in the future require sponsorship?", "How many years of Python experience?" (range
+dropdowns included), "Have you applied to {company} before?", "Do you have relatives at
+{company}?", "Highest degree", "Are you comfortable working in office 3 days a week?", and so on.
+
+## Quick start
+
+Requires Python 3.10+, no third-party packages.
+
+```bash
+python -m jobfill init
+```
+
+Then, in Claude Code, run `/setup` (Codex and other agents: "set me up", see `AGENTS.md`). The agent
+reads `documents/` (or a pasted resume), checks what it found against what is still missing, and
+sends you one numbered questionnaire with every open question. Nothing is written until you confirm.
+
+Try it with the fictional sample profile:
+
+```bash
+python -m jobfill --db data/demo.db import examples/sample_profile.json --apply
+```
+
+```bash
+python -m jobfill --db data/demo.db app start --company "Acme Robotics" --role "ML Infrastructure Engineer"
+```
+
+```bash
+python -m jobfill --db data/demo.db resolve examples/sample_form.json --app 1 --compact
+```
+
+On the 50-field sample form, plain Python fills about 40 fields; 4 go to the agent.
+
+## Applying from a URL: `/apply <job URL>`
+
+```bash
+python -m pip install playwright
+```
+
+```bash
+python -m playwright install chromium
+```
+
+1. **Detect** (`apply start <url>`, plain Python): URL rules, then the page HTML (embedded
+   Greenhouse/Lever/iCIMS/Ashby forms, schema.org `JobPosting`). Not a job posting (search page, company
+   board, removed posting, unrelated page) is an error. Greenhouse and Lever postings are also read
+   through their public APIs, so the posting text costs no browsing.
+2. **Fill**, by system:
+
+| System | Who fills | Notes |
+|---|---|---|
+| Greenhouse, Lever, iCIMS, Ashby | jobfill's Playwright filler (`apply fill`) | visible Chromium window that stays open; React dropdowns, autocompletes, radio/checkbox groups, yes/no toggle buttons, resume upload; re-reads the form for follow-up questions; iCIMS email step and multi-page `apply next` |
+| Workday | nobody yet | needs an account login; reported as unsupported |
+| Company portals (Amazon, TikTok, Google, ...) and other ATSs (SmartRecruiters, Workable, ...) | the agent in the built-in browser | answers still come from `jobfill resolve` |
+| LinkedIn / Indeed listings | the agent follows the employer's apply link first | |
+
+The filler never types passwords, never solves CAPTCHAs, never accepts terms without a standing
+consent, and never submits: `apply submit --confirm` runs only after the candidate says so (or they
+click Submit themselves). `apply fill --dry-run` previews what would be filled without typing.
+
+### The result record of each application
+
+Every question seen on a form is saved with the application: the question, the answer, who answered
+it (your profile via plain Python, the AI, or you), and whether jobfill typed it in. The record is
+written to `data/applications/app<ID>_<company>_<role>.md` (readable) and `.json`, and is refreshed
+after every fill, recorded answer, and status change:
+
+```
+## Result
+| Answered by                        | Questions |
+| Your profile (plain Python, no AI) | 11 |
+| AI                                 | 1  |
+| You                                | 0  |
+| Left blank                         | 2  |
+| Still open                         | 0  |
+Plain Python answered 92% of the answered questions without any AI tokens.
+
+## Questions
+| # | Question  | Answer        | Answered by                        | Into the form    |
+| 2 | Full name | Jordan Rivera | your profile (plain Python, no AI) | typed by jobfill |
+...
+```
+
+`python -m jobfill app report <ID>` regenerates it; `python -m jobfill app stats` totals how much
+plain Python, the AI and you answered across all applications.
+
+## Field JSON (what a form filler sends to `resolve`)
+
+```json
+{"fields": [
+  {"id": "q7", "label": "Will you require sponsorship?", "type": "select", "options": ["Yes", "No"], "required": true},
+  {"id": "e0", "label": "Company", "type": "text", "section": "experience", "index": 0},
+  {"id": "w",  "label": "Why do you want to work at Acme?", "type": "textarea", "max_chars": 1000},
+  {"id": "d",  "label": "Start date", "type": "date", "format": "MM/DD/YYYY"}
+]}
+```
+
+- `type`: `text`, `textarea`, `email`, `tel`, `url`, `number`, `date`, `select`, `radio`,
+  `checkbox`, `multiselect`, `file`.
+- `options`: strings or `{"label", "value"}` objects. jobfill returns the option to pick.
+- `section` + `index`: repeating blocks (`education`, `experience`, `project`, `reference`), 0 = most recent.
+- `format`: date format (`YYYY`, `MM`, `DD`, `MMM`, `MMMM`). `max_chars` / `max_words`: limits for written answers.
+- `required`: optional fields with nothing stored are skipped instead of asked.
+
+Each result has a `status`: `filled` (use `value`), `needs_ai` (agent writes it from `ai_task` and
+the shared `ai_context`), `needs_user` (ask once, store with the given command), `uncertain`
+(agent picks one of `candidates`), `unmatched` (new question, queued for `/learn`), `skipped`.
+
+## How the database keeps up with new questions
+
+1. An unknown label is saved in `pending_questions` with its options and the company.
+2. The agent classifies it (`/learn`): a new phrasing of a known question (alias or regex), a new
+   reusable fact (tier 1/2), or a new tier-3 question.
+3. Next time any company asks it, plain Python answers. Learned questions can be exported and
+   shared without personal data (`catalog export-learned`).
+
+Missing facts work the same way: the first form that needs one asks you, the answer is stored, and
+every later form uses it.
+
+## CLI
+
+```
+init | status | missing [--tier] [--level]
+fact get|set|unset|confirm|list|define|history
+record list|add|update|remove|kinds
+import <patch.json> [--apply] [--replace ids] [--replace-all]
+export [--format json|md] [--tier] [--out]
+match "<label>" [--section] [--type] [--company]        (debug the matcher)
+resolve <fields.json> [--app ID] [--no-log] [--compact]
+context --question <id> [--app ID] [--max-chars N]      (AI context for one tier-3 question)
+answer record|list                                       (application answer log)
+apply detect|start <url> | apply fill|set|next|submit|status --app ID | apply close
+app start|list|show|update
+pending | learn <pending_id> --alias-of|--new-question|--ignore
+question list|show|alias | catalog export-learned|import-learned
+```
+
+`--db <path>` or `JOBFILL_DB` selects the database (default `data/jobfill.db`).
+
+## Layout
+
+```
+jobfill/
+  catalog/      built-in schema: facts.py (tier 1-2 facts), records.py (repeating data),
+                choices.py (canonical values + option synonyms), questions.py (question bank)
+  db.py         SQLite schema and seeding      store.py   profile, bank, answer log
+  matcher.py    label -> question              derive.py  plain-Python answer rules
+  resolver.py   fields -> answers / AI tasks   cli.py     commands
+  apply/        /apply: detect.py (which system), extract.js + forms.py (read/fill any form),
+                adapters.py (Greenhouse/Lever/iCIMS/Ashby quirks), runner.py, browser.py (shared window)
+  report.py     per-application result record (data/applications/)
+.claude/commands/  agent workflows: setup, apply, fill, learn, update (AGENTS.md points other agents here)
+documents/      your source documents (gitignored)     data/  the database and drafts (gitignored)
+examples/       fictional profile + sample form        tests/ unittest suite
+```
+
+## Privacy
+
+All personal data stays in `data/` and `documents/`, both gitignored. EEO, criminal-record,
+visa/sponsorship, date-of-birth and salary answers are never inferred from documents; the agent asks.
+The AI context for written answers carries only the profile slices a question needs: never EEO
+answers, contact details or address.
