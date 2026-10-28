@@ -58,7 +58,8 @@ def start(store, data_dir: Path, url: str, *, company=None, role=None, source=No
     if ats:   # the agent looked at the page and decided
         d.ats = ats
         d.kind = "job"
-        d.handler = "python" if ats in adapters.ADAPTERS and ats != "generic" else "ai"
+        # "generic": a portal that needs an account, filled in the jobfill window so the login carries over
+        d.handler = "python" if ats in adapters.ADAPTERS else "ai"
         d.apply_url = d.apply_url or url
     if d.kind == "not_job":
         raise ApplyError(f"Not a job posting: {d.reason}", code=3, detection=d.to_dict())
@@ -166,10 +167,14 @@ def summarize(report: dict, app_id: int) -> dict:
     }
     if out["needs_ai"] and report.get("ai_context"):
         out["ai_context"] = report["ai_context"]
+    if "login_required" in out["blockers"]:
+        out["next"] = (f"This site needs an account. Ask the candidate to run `python -m jobfill login --app {app_id}` "
+                       "in their own terminal (it creates or signs in to the account), then run `apply fill` again. "
+                       "Never run login yourself.")
     return {k: v for k, v in out.items() if v not in ([], None)}
 
 
-def _open(ctx, state: dict, adapter):
+def open_page(ctx, state: dict, adapter):
     page, fresh = browser.find_page(ctx, state["tag"], state["apply_url"])
     if fresh:
         adapter.open(page, state["apply_url"])
@@ -185,7 +190,7 @@ def fill_command(store, data_dir: Path, app_id: int, *, overwrite=False, headles
         raise ApplyError(f"application {app_id} is handled by the agent ({state['handler']}), not the Python filler")
     adapter = adapters.get(state["ats"])
     with browser.session(data_dir, headless) as ctx:
-        page, fresh = _open(ctx, state, adapter)
+        page, fresh = open_page(ctx, state, adapter)
         blockers = adapter.prepare(page, store, dry_run=dry_run)
         if {"login_required", "job_closed", "email_gate", "consent_required"} & set(blockers):
             report = {"fields": {}, "blockers": blockers}
@@ -208,7 +213,7 @@ def set_command(store, data_dir: Path, app_id: int, field_id: str, value, *, hea
     state = load_state(data_dir, app_id)
     adapter = adapters.get(state["ats"])
     with browser.session(data_dir, headless) as ctx:
-        page, _ = _open(ctx, state, adapter)
+        page, _ = open_page(ctx, state, adapter)
         frame = adapter.frame(page)
         fields = {f["id"]: f for f in extract(frame, adapter.root_selector, read_options=False)}
         f = fields.get(field_id) or fields.get("g-" + field_id)
@@ -226,7 +231,7 @@ def next_command(data_dir: Path, app_id: int, *, headless=False) -> dict:
     state = load_state(data_dir, app_id)
     adapter = adapters.get(state["ats"])
     with browser.session(data_dir, headless) as ctx:
-        page, _ = _open(ctx, state, adapter)
+        page, _ = open_page(ctx, state, adapter)
         frame = adapter.frame(page)
         btn = adapter.next_button(frame)
         if btn is None:
@@ -249,7 +254,7 @@ def submit_command(store, data_dir: Path, app_id: int, *, confirm: bool, headles
     state = load_state(data_dir, app_id)
     adapter = adapters.get(state["ats"])
     with browser.session(data_dir, headless) as ctx:
-        page, _ = _open(ctx, state, adapter)
+        page, _ = open_page(ctx, state, adapter)
         frame = adapter.frame(page)
         btn = adapter.submit_button(frame)
         if btn is None:

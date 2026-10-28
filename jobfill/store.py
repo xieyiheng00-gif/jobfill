@@ -495,6 +495,40 @@ class Store:
             self.conn.execute("UPDATE pending_questions SET status=?, resolution=? WHERE id=?",
                               (status, resolution, pending_id))
 
+    # ------------------------------------------------------------------ portal accounts (no passwords)
+    def account(self, host: str) -> dict | None:
+        r = self.conn.execute("SELECT * FROM accounts WHERE host=?", (host.lower(),)).fetchone()
+        return dict(r) if r else None
+
+    def accounts(self) -> list[dict]:
+        return [dict(r) for r in self.conn.execute("SELECT * FROM accounts ORDER BY updated_at DESC")]
+
+    def upsert_account(self, host: str, company_key: str, email: str, status: str) -> dict:
+        ts = now()
+        with self.conn:
+            self.conn.execute(
+                """INSERT INTO accounts (host, company_key, email, status, created_at, updated_at) VALUES (?,?,?,?,?,?)
+                   ON CONFLICT(host) DO UPDATE SET email=excluded.email, status=excluded.status,
+                     updated_at=excluded.updated_at""", (host.lower(), company_key, email, status, ts, ts))
+        return self.account(host)
+
+    def set_account_status(self, host: str, status: str) -> None:
+        with self.conn:
+            self.conn.execute("UPDATE accounts SET status=?, updated_at=? WHERE host=?", (status, now(), host.lower()))
+
+    def rotate_account(self, host: str) -> dict:
+        """After resetting the password on the site: move to the next derived password."""
+        with self.conn:
+            n = self.conn.execute("UPDATE accounts SET version = version + 1, updated_at=? WHERE host=?",
+                                  (now(), host.lower())).rowcount
+        if not n:
+            raise ValidationError(f"no account for {host}")
+        return self.account(host)
+
+    def forget_account(self, host: str) -> bool:
+        with self.conn:
+            return self.conn.execute("DELETE FROM accounts WHERE host=?", (host.lower(),)).rowcount > 0
+
     # ------------------------------------------------------------------ applications & answer log
     def start_application(self, company: str, role: str | None = None, **extra) -> int:
         cols = {k: v for k, v in extra.items()

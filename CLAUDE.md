@@ -33,7 +33,9 @@ must answer once, new questions to classify, and tier-3 answers that must be wri
   the whole profile; the point of jobfill is to keep those prompts small.
 - Ground every written claim in stored data. If the data cannot support an answer, ask.
 - Never submit an application without the candidate's explicit confirmation. Never type passwords
-  or solve CAPTCHAs; the candidate does those in the browser window.
+  or verification codes, never solve CAPTCHAs. Account sign-up/sign-in is `python -m jobfill login`,
+  which the candidate runs in their own terminal; never run it, `account password --show`, or read
+  `data/secret.env` yourself.
 
 ## Development
 
@@ -42,6 +44,9 @@ must answer once, new questions to classify, and tier-3 answers that must be wri
   Tests: `python -m unittest discover -s tests -t .` (browser tests skip without Playwright).
 - Filler code: `jobfill/apply/` (`detect.py` system detection, `extract.js` + `forms.py` generic field
   reading/filling, `adapters.py` per-ATS quirks, `runner.py` commands, `browser.py` shared window).
+- Accounts: `jobfill/accounts.py` (secret.env, HMAC-SHA256 per-company passwords, login email),
+  `jobfill/apply/login.py` (sign in / create / verify flow), `jobfill/mail.py` (optional IMAP reader).
+  The `accounts` table holds no passwords. Login is tested only on `tests/fixtures/auth_like.html`.
 - Result record: every question of an application is a row in `answers` (status, source, fill);
   `jobfill/report.py` turns it into `data/applications/app<ID>_*.md|json` and `app stats`.
 - Built-in catalog: `jobfill/catalog/` (`facts.py`, `records.py`, `choices.py`, `questions.py`).

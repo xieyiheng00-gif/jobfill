@@ -92,7 +92,9 @@ Use the section headings below, include only sections that have questions, one l
 - one item: "Anything above wrong or to leave out? (reply 'all ok' if not)"
 
 **B. Identity & contact** - missing name, preferred name, pronouns (optional; "decline" is fine), email,
-phone, address, LinkedIn/GitHub.
+phone, address, LinkedIn/GitHub. Then one line: "Job portals that need an account (Workday and some
+company sites) will use <contact email> to sign up: OK, or use another address?" Store the answer in
+`account.login_email` (the contact email itself if they keep it, so it is not asked again).
 Where the documents suggest a value, show it in brackets so "ok" confirms it.
 
 **C. Work authorization** - primary job-search country, countries they can work in, citizenship,

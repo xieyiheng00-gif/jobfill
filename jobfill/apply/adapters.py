@@ -186,6 +186,35 @@ class Ashby(Adapter):
         frame.wait_for_timeout(1500)
 
 
+class Workday(Adapter):
+    """Workday: each company is its own tenant with its own account. Apply -> Apply Manually ->
+    Sign in with email, then a multi-page form ("Save and Continue")."""
+    name = "workday"
+    ready_selector = ("[data-automation-id=signInContent], [data-automation-id=applyFlowPage], "
+                      "[data-automation-id=adventureButton], input")
+    submit_selector = "[data-automation-id=bottom-navigation-next-button]:has-text('Submit')"
+
+    def open(self, page, url: str) -> None:
+        super().open(page, url)
+        # Each step's button renders only after the previous click has loaded; a step that never shows up
+        # (already signed in, or a tenant without that choice) is skipped.
+        for step in ("adventureButton", "applyManually", "SignInWithEmailButton"):
+            button = page.locator(f"[data-automation-id={step}]:visible").first
+            try:
+                button.wait_for(state="visible", timeout=10000)
+            except Exception:
+                continue
+            button.click()
+        page.wait_for_timeout(1500)
+        self.wait_ready(page)
+
+    def next_button(self, frame):
+        nxt = frame.locator("[data-automation-id=bottom-navigation-next-button]:visible").first
+        if nxt.count() and not SUBMIT_WORDS.match(self._button_text(nxt)):
+            return nxt
+        return super().next_button(frame)
+
+
 class ICIMS(Adapter):
     name = "icims"
     ready_selector = "input, select, textarea, button"
@@ -232,7 +261,8 @@ class ICIMS(Adapter):
         return self.blockers(page)
 
 
-ADAPTERS = {"greenhouse": Greenhouse(), "lever": Lever(), "icims": ICIMS(), "ashby": Ashby(), "generic": Adapter()}
+ADAPTERS = {"greenhouse": Greenhouse(), "lever": Lever(), "icims": ICIMS(), "ashby": Ashby(), "workday": Workday(),
+            "generic": Adapter()}
 
 
 def get(name: str | None) -> Adapter:

@@ -83,13 +83,34 @@ python -m playwright install chromium
 | System | Who fills | Notes |
 |---|---|---|
 | Greenhouse, Lever, iCIMS, Ashby | jobfill's Playwright filler (`apply fill`) | visible Chromium window that stays open; React dropdowns, autocompletes, radio/checkbox groups, yes/no toggle buttons, resume upload; re-reads the form for follow-up questions; iCIMS email step and multi-page `apply next` |
-| Workday | nobody yet | needs an account login; reported as unsupported |
-| Company portals (Amazon, TikTok, Google, ...) and other ATSs (SmartRecruiters, Workable, ...) | the agent in the built-in browser | answers still come from `jobfill resolve` |
+| Workday | `jobfill login` (you run it), then the Playwright filler | Apply → Apply Manually → sign in / create account; multi-page `apply next`; Workday's own dropdown widgets are not read yet |
+| Company portals (Amazon, TikTok, Google, ...) and other ATSs (SmartRecruiters, Workable, ...) | the agent in the built-in browser; portals that need an account use the jobfill window (`--ats generic`) so the login carries over | answers still come from `jobfill resolve` |
 | LinkedIn / Indeed listings | the agent follows the employer's apply link first | |
 
-The filler never types passwords, never solves CAPTCHAs, never accepts terms without a standing
-consent, and never submits: `apply submit --confirm` runs only after the candidate says so (or they
-click Submit themselves). `apply fill --dry-run` previews what would be filled without typing.
+The filler never solves CAPTCHAs, never accepts terms without a standing consent, and never submits:
+`apply submit --confirm` runs only after the candidate says so (or they click Submit themselves).
+`apply fill --dry-run` previews what would be filled without typing.
+
+### Accounts and login (Workday, company portals)
+
+Sites that need an account are handled by `python -m jobfill login --app <ID>`, which **you run in your
+own terminal** (it refuses to run otherwise, so the agent can never type a password):
+
+- **Email:** your contact email by default; the first login asks whether to use another address and
+  remembers it (`account.login_email`, change it with `jobfill account email --set ...`).
+- **Password:** `HMAC-SHA256(secret, company name)`, written as 16 characters with upper, lower, digit
+  and symbol so it passes typical rules. The secret is generated once in `data/secret.env` (gitignored;
+  back it up). Nothing else is stored: the `accounts` table records only site, email, status and a
+  version number. `jobfill account password --host <site> --show` prints a password in your terminal
+  if you ever need to log in by hand; after a reset on the site, `jobfill account rotate --host <site>`
+  moves to the next derived password.
+- **Flow:** signs in if jobfill created the account before, else creates it (filling password + confirm,
+  accepting the terms only if you allowed that once), switches to sign-in when the site says the email
+  already exists, never touches hidden honeypot fields, and stops for CAPTCHAs.
+- **Email verification (optional):** fill the `JOBFILL_IMAP_*` lines in `data/secret.env` (for Gmail, an
+  app password; check with `jobfill mail test`). `login` then reads the portal's verification email
+  read-only, enters the code, or opens the link only if it points at the portal's own domain. Without
+  it, you enter the code or click the link yourself and run `login` again.
 
 ### The result record of each application
 
@@ -167,6 +188,7 @@ resolve <fields.json> [--app ID] [--no-log] [--compact]
 context --question <id> [--app ID] [--max-chars N]      (AI context for one tier-3 question)
 answer record|list                                       (application answer log)
 apply detect|start <url> | apply fill|set|next|submit|status --app ID | apply close
+login --app ID  (you run it) | account email|list|password|rotate|forget | mail test
 app start|list|show|update
 pending | learn <pending_id> --alias-of|--new-question|--ignore
 question list|show|alias | catalog export-learned|import-learned

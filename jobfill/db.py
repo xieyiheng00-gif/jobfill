@@ -139,6 +139,19 @@ CREATE TABLE IF NOT EXISTS answers (
     UNIQUE (application_id, field_key)
 );
 
+-- Job-portal accounts jobfill created or signed in to. No passwords: they are derived from
+-- secret.env (HMAC-SHA256 of company_key, plus #version after a reset).
+CREATE TABLE IF NOT EXISTS accounts (
+    id           INTEGER PRIMARY KEY,
+    host         TEXT NOT NULL UNIQUE,     -- e.g. nvidia.wd5.myworkdayjobs.com
+    company_key  TEXT NOT NULL,            -- name the password is derived from
+    email        TEXT NOT NULL,
+    version      INTEGER NOT NULL DEFAULT 1,
+    status       TEXT NOT NULL,            -- pending | created | verified | active | failed
+    created_at   TEXT NOT NULL,
+    updated_at   TEXT NOT NULL
+);
+
 -- Questions seen in a form that the bank could not answer yet.
 CREATE TABLE IF NOT EXISTS pending_questions (
     id            INTEGER PRIMARY KEY,

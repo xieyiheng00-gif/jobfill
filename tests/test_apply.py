@@ -39,9 +39,12 @@ class TestDetect(unittest.TestCase):
         self.assertEqual((embedded.ats, embedded.apply_url),
                          ("ashby", "https://jobs.ashbyhq.com/acme/240d459b-696d-43eb-8497-fab3e56ecd9b/application"))
 
-    def test_workday_is_recognised_but_unsupported(self):
-        wd = self.d("https://nvidia.wd5.myworkdayjobs.com/en-US/External/job/US-CA-Santa-Clara/Engineer_JR1")
-        self.assertEqual((wd.kind, wd.ats, wd.handler), ("job", "workday", "unsupported"))
+    def test_workday_is_filled_by_python_after_login(self):
+        wd = self.d("https://nvidia.wd5.myworkdayjobs.com/en-US/External/job/US-CA-Santa-Clara/Senior-Engineer_JR2014108")
+        self.assertEqual((wd.kind, wd.ats, wd.handler, wd.company, wd.role),
+                         ("job", "workday", "python", "Nvidia", "Senior Engineer"))
+        self.assertIn("jobfill login", wd.reason)
+        self.assertEqual(self.d("https://nvidia.wd5.myworkdayjobs.com/en-US/External").kind, "not_job")
 
     def test_not_a_job(self):
         for url in ("hello", "ftp://example.com/file", "https://boards.greenhouse.io/anthropic",

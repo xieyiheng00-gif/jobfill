@@ -5,10 +5,10 @@ schema.org JobPosting markup). Only when both are inconclusive does the agent lo
 page itself (``handler == "agent_check"``).
 
 handler   meaning
-python    Greenhouse / Lever / iCIMS / Ashby: jobfill's Playwright filler does the work
+python    Greenhouse / Lever / iCIMS / Ashby / Workday: jobfill's Playwright filler does the work
 ai        company portal or other ATS: the agent fills it in the built-in browser
 follow    job board listing (LinkedIn, Indeed...): find the employer's apply link first
-unsupported  known but not handled yet (Workday: needs an account login)
+unsupported  known but not handled yet
 agent_check  page could not be classified from its HTML; the agent decides
 none      not a job posting -> error
 """
@@ -27,7 +27,7 @@ UA = ("Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like
       "Chrome/126.0 Safari/537.36")
 UUID = r"[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}"
 
-PYTHON_ATS = {"greenhouse", "lever", "icims", "ashby"}
+PYTHON_ATS = {"greenhouse", "lever", "icims", "ashby", "workday"}
 
 # Other ATS products: recognised, filled by the agent in the browser.
 OTHER_ATS = {
@@ -220,6 +220,20 @@ def _icims(d: Detection, u) -> Detection:
     return d
 
 
+def _workday(d: Detection, u) -> Detection:
+    """Workday: every company is a tenant (acme.wd5.myworkdayjobs.com) with its own applicant account."""
+    d.kind, d.ats, d.handler, d.apply_url = "job", "workday", "python", u.geturl()
+    tenant = u.netloc.split(".")[0]
+    d.company = d.company or _titleize(tenant)
+    m = re.search(r"/job/[^/]+/([^/?#]+)", u.path)
+    if m:
+        d.role = re.sub(r"_[A-Z]*-?\d+$", "", m.group(1)).replace("-", " ").strip() or None
+    d.extra = {"tenant": tenant}
+    d.reason = ("Workday needs an applicant account for this company: when `apply fill` reports login_required, "
+                "the candidate runs `python -m jobfill login --app <ID>`.")
+    return d
+
+
 def _not_job(d: Detection, reason: str) -> Detection:
     d.kind, d.handler, d.reason = "not_job", "none", reason
     return d
@@ -252,11 +266,9 @@ def _from_html(d: Detection, html: str, network: bool) -> Detection:
     m = re.search(r"https?://[\w.-]+\.icims\.com/jobs/\d+[^\"'<> ]*", html)
     if m:
         return _icims(d, urlparse(htmllib.unescape(m.group(0))))
-    m = re.search(r"https?://[\w.-]+\.(?:myworkdayjobs|myworkdaysite)\.com/[^\"'<> ]*", html)
+    m = re.search(r"https?://[\w.-]+\.(?:myworkdayjobs|myworkdaysite)\.com/[^\"'<> ]*/job/[^\"'<> ]*", html)
     if m:
-        d.kind, d.ats, d.handler, d.apply_url = "job", "workday", "unsupported", m.group(0)
-        d.reason = "This job uses Workday, which needs an account login. Not supported yet."
-        return d
+        return _workday(d, urlparse(htmllib.unescape(m.group(0))))
 
     posting = _json_ld_posting(html)
     if posting:
@@ -337,9 +349,7 @@ def detect(url: str, *, network: bool = True, html: str | None = None) -> Detect
         return _icims(d, u)
     if re.search(r"(myworkdayjobs|myworkdaysite)\.com$|(^|\.)workday\.com$", host):
         if "/job/" in u.path or re.search(r"/details/", u.path):
-            d.kind, d.ats, d.handler, d.apply_url = "job", "workday", "unsupported", url
-            d.reason = "This job uses Workday, which needs an account login. Not supported yet."
-            return d
+            return _workday(d, u)
         return _not_job(d, "Workday search or landing page, not a single job.")
     for name, (host_re, path_re) in AGGREGATORS.items():
         if _host_matches(host, host_re):

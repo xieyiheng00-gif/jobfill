@@ -14,22 +14,28 @@ If `$ARGUMENTS` is empty, ask for the job URL and stop.
 | Result | Do |
 |---|---|
 | exit code 3, `"error": "Not a job posting: ..."` | Reply with that error in one line and stop. |
-| `handler: "unsupported"` (Workday) | Reply: "This job uses Workday, which needs an account login; jobfill does not support it yet. Please apply manually: <url>". Stop. |
+| `handler: "unsupported"` | Reply that jobfill does not support this system yet and give the URL to apply manually. Stop. |
 | `handler: "follow"` (LinkedIn, Indeed, ...) | Open the URL in the built-in browser, find the employer's own apply link (not Easy Apply), and run `apply start` again with that link. If there is none (Easy Apply only), say so and stop. |
 | `handler: "agent_check"` | The HTML alone could not tell. Open it in the built-in browser and read the text (`get_page_text`). Not a job posting: reply with the error and stop. A job: look at where "Apply" leads or which iframe holds the form; rerun `apply start` with that apply URL, or with `--ats custom --company "<Company>" --role "<Role>"` for a company portal. |
-| `handler: "python"` (Greenhouse, Lever, iCIMS, Ashby) | Step 2. |
-| `handler: "ai"` (Amazon, TikTok, Google, other portals and ATSs) | Step 3. |
+| `handler: "python"` (Greenhouse, Lever, iCIMS, Ashby, Workday) | Step 2. |
+| `handler: "ai"` (Amazon, TikTok, Google, other portals and ATSs) | Step 3, unless the portal needs an account: then rerun `apply start "<url>" --ats generic` so it is filled in the jobfill window, where `jobfill login` signs in, and go to Step 2. |
 
 The output includes `app_id`, company, role, and earlier applications to the same company
 (mention those). The posting text is saved for tier-3 answers.
 
-## Step 2: Python filler (Greenhouse, Lever, iCIMS, Ashby)
+## Step 2: Python filler (Greenhouse, Lever, iCIMS, Ashby, Workday)
 
 1. `python -m jobfill apply fill --app <ID>` opens a visible Chromium window (it stays open between
    commands), fills the form from the database, re-reads it for follow-up questions, and prints what
    is left:
-   - `blockers: ["login_required"]` - iCIMS wants an account. Tell the candidate to sign in or create
-     the account in that window themselves (never type a password), then rerun `apply fill`.
+   - `blockers: ["login_required"]` - the site needs an account (Workday always; iCIMS and some portals).
+     Ask the candidate to run, in their own terminal: `python -m jobfill login --app <ID>`. It creates
+     or signs in to the account in the jobfill window with their login email and the per-company
+     password, and reads the verification email if the mail connector is set up. **Never run `login`
+     or `account password --show` yourself** (they refuse without a terminal), and never type a
+     password or a verification code. When they say it worked, rerun `apply fill`.
+     If login reports `needs_verification`, `captcha` or `consent_required`, the candidate finishes that
+     step in the window and runs login again.
    - `blockers: ["consent_required"]` - the page wants terms/privacy accepted before continuing and the
      candidate has no standing `consent.privacy_ack`. Ask them; if they agree, they tick it in the window
      (or set the fact for the future), then rerun `apply fill`.
@@ -50,8 +56,10 @@ The output includes `app_id`, company, role, and earlier applications to the sam
 2. Run `python -m jobfill apply fill --app <ID>` again. Stored facts and recorded answers now fill
    the remaining fields; values already in the form are kept (`--overwrite` replaces them).
    One-off questions not worth learning: `apply set` with the answer.
-3. Multi-page forms (iCIMS): when a page is done, `python -m jobfill apply next --app <ID>` clicks
-   Next/Continue (it never clicks a final submit), then `apply fill` again for the new page.
+3. Multi-page forms (iCIMS, Workday): when a page is done, `python -m jobfill apply next --app <ID>`
+   clicks Next / Save and Continue (it never clicks a final submit), then `apply fill` again for the new
+   page. Workday's own dropdown widgets are not read yet: anything left blank on a Workday page goes to
+   the candidate to pick in the window.
 4. Review, in ONE message: every written answer (numbered, with character/word count), any
    `fill_failed` you could not fix, and a reminder that the window shows the whole filled form.
    Ask them to check the window, then to say "submit" or list changes.

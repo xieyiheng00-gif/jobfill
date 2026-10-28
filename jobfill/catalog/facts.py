@@ -160,6 +160,14 @@ FACTS = [
     F("consent.data_retention_ok", 1, "bool", "Keep data for future roles",
       "Are you happy for employers to keep your application on file for future openings?"),
     F("consent.sms_ok", 1, "bool", "Text message consent", "Do you agree to receive recruiting text messages?"),
+    F("consent.account_terms", 1, "bool", "Accept portal account terms",
+      "When jobfill creates a job-portal account for you (Workday, company career sites), may it tick the "
+      "box accepting that site's account terms / privacy policy?"),
+
+    # ---------------------------------------------------------------- job-portal accounts (tier 1)
+    F("account.login_email", 1, "email", "Login email for job portals",
+      "Which email should jobfill use to create and sign in to job-portal accounts? (Default: your contact "
+      "email.) It must be an inbox you can read: some sites email a verification code.", setup="recommended"),
 
     # ---------------------------------------------------------------- compensation (tier 2)
     F("comp.currency", 2, "string", "Salary currency", "Currency for salary answers (e.g. USD)",

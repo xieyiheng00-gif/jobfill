@@ -37,8 +37,10 @@ def _data_arg(args) -> dict:
 # ---------------------------------------------------------------------- commands
 
 def cmd_init(store, args):
+    from . import accounts
     info = db.seed(store.conn)
-    _out({"db": str(args.db or db.default_db_path()), "seeded": info, "status": store.status()})
+    _out({"db": str(args.db or db.default_db_path()), "seeded": info,
+          "secret_file": str(accounts.ensure_secret(_data_dir(args))), "status": store.status()})
 
 
 def cmd_status(store, args):
@@ -259,6 +261,89 @@ def cmd_apply(store, args):
     except runner.ApplyError as e:
         print(dumps(e.payload), file=sys.stderr)
         raise SystemExit(e.code)
+
+
+TERMINAL_ONLY = ("`jobfill {cmd}` {why}, so it only runs when you start it yourself in a terminal "
+                 "(it was started without one). Run it in your own terminal: python -m jobfill {usage}")
+
+
+def _require_terminal(cmd: str, why: str, usage: str) -> None:
+    if not (sys.stdin.isatty() and sys.stdout.isatty()):
+        raise ValidationError(TERMINAL_ONLY.format(cmd=cmd, why=why, usage=usage))
+
+
+def cmd_login(store, args):
+    from urllib.parse import urlparse
+    from . import accounts
+    from .apply import adapters, browser, runner
+    from .apply.login import login_flow
+    from .mail import ImapMail
+    _require_terminal("login", "types a password into a website", f"login --app {args.app}")
+    data_dir = _data_dir(args)
+    accounts.ensure_secret(data_dir)
+    state = runner.load_state(data_dir, args.app)
+    app = store.application(args.app)
+    if store.get_fact("account.login_email") is None:
+        default = store.get_fact("contact.email") or ""
+        answer = input(f"Email for job-portal accounts [{default}]: ").strip() or default
+        print(f"Saved: {store.set_fact('account.login_email', answer, 'login')} (change it with `jobfill account email --set`)")
+    if store.get_fact("consent.account_terms") is None:
+        answer = input("When a new account requires accepting the site's terms / privacy policy, may jobfill tick "
+                       "that box for you? [y/N]: ")
+        store.set_fact("consent.account_terms", answer.strip().lower() in ("y", "yes"), "login")
+    mail = None if args.no_mail else ImapMail.from_env(accounts.load_env(data_dir / accounts.SECRET_FILE))
+    adapter = adapters.get(state["ats"])
+    with browser.session(data_dir, args.headless) as ctx:
+        page, _ = runner.open_page(ctx, state, adapter)
+        outcome = login_flow(page, adapter.frame(page), store, data_dir, urlparse(page.url).netloc, app["company"],
+                             mail=mail)
+        state["page_url"] = page.url
+    runner.save_state(data_dir, args.app, state)
+    out = outcome.to_dict()
+    out["mail_connector"] = "on" if mail else "off (optional: see data/secret.env)"
+    if outcome.status in ("signed_in", "no_login_form"):
+        out["next"] = f"Tell the agent to continue: python -m jobfill apply fill --app {args.app}"
+    _out(out)
+
+
+def cmd_account(store, args):
+    from . import accounts
+    data_dir = _data_dir(args)
+    if args.action == "email":
+        if args.set:
+            store.set_fact("account.login_email", args.set, "user")
+        _out({"login_email": accounts.login_email(store),
+              "source": "account.login_email" if store.get_fact("account.login_email") else "contact.email (default)"})
+    elif args.action == "list":
+        _out([{k: a[k] for k in ("host", "company_key", "email", "status", "version", "updated_at")}
+              for a in store.accounts()])
+    elif args.action == "password":
+        row = store.account(args.host) if args.host else None
+        if row is None and not args.company:
+            raise ValidationError("pass --host of an existing account (see `account list`) or --company for a new site")
+        name, version = (row["company_key"], row["version"]) if row else (accounts.account_name(args.company), 1)
+        if not args.show:
+            return _out({"company_key": name, "version": version,
+                         "note": "Run with --show in your own terminal to print the password."})
+        _require_terminal("account password --show", "prints a password", "account password --show ...")
+        print(accounts.derive_password(accounts.secret(data_dir), name, version))
+    elif args.action == "rotate":
+        row = store.rotate_account(args.host)
+        _out({"host": row["host"], "version": row["version"],
+              "note": "Set the site's password to the new one: `account password --host ... --show` (yourself)."})
+    elif args.action == "forget":
+        _out({"host": args.host, "removed": store.forget_account(args.host)})
+
+
+def cmd_mail(store, args):
+    from . import accounts
+    from .mail import ImapMail
+    path = accounts.ensure_secret(_data_dir(args))
+    mail = ImapMail.from_env(accounts.load_env(path))
+    if mail is None:
+        return _out({"connected": False, "note": f"Optional. Fill the JOBFILL_IMAP_* lines in {path} to let "
+                                                 "`jobfill login` read verification codes."})
+    _out(mail.test())
 
 
 def cmd_pending(store, args):
@@ -482,6 +567,27 @@ def build_parser() -> argparse.ArgumentParser:
                            help="the candidate explicitly approved submitting this application")
     aps.add_parser("close", help="close the jobfill browser window")
     s.set_defaults(fn=cmd_apply)
+
+    s = sub.add_parser("login", help="create or sign in to this application's job-portal account (run it yourself)")
+    s.add_argument("--app", type=int, required=True)
+    s.add_argument("--no-mail", action="store_true", help="do not use the mail connector")
+    s.add_argument("--headless", action="store_true", help=argparse.SUPPRESS)
+    s.set_defaults(fn=cmd_login)
+
+    s = sub.add_parser("account", help="job-portal accounts: login email, list, passwords (no passwords are stored)")
+    acs = s.add_subparsers(dest="action", required=True)
+    x = acs.add_parser("email", help="show or change the login email"); x.add_argument("--set")
+    acs.add_parser("list")
+    x = acs.add_parser("password", help="the derived password for a site (printed only with --show, in your terminal)")
+    x.add_argument("--host"); x.add_argument("--company"); x.add_argument("--show", action="store_true")
+    x = acs.add_parser("rotate", help="use the next password for a site after resetting it there"); x.add_argument("--host", required=True)
+    x = acs.add_parser("forget", help="drop an account record"); x.add_argument("--host", required=True)
+    s.set_defaults(fn=cmd_account)
+
+    s = sub.add_parser("mail", help="optional mail connector for verification codes")
+    ms = s.add_subparsers(dest="action", required=True)
+    ms.add_parser("test", help="check the IMAP settings in data/secret.env")
+    s.set_defaults(fn=cmd_mail)
 
     s = sub.add_parser("pending", help="questions seen in forms that the bank could not answer")
     s.add_argument("--all", action="store_true")

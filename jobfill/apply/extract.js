@@ -166,7 +166,8 @@
     // React-Select keeps an aria-hidden, tabindex=-1 input next to each dropdown for validation.
     if (el.getAttribute("aria-hidden") === "true" && type !== "file") continue;
     const name = el.getAttribute("name") || "";
-    if (/captcha|honeypot|recaptcha|hcaptcha/i.test(`${name} ${el.id} ${el.className}`)) continue;
+    // Bot traps: filling Workday's hidden "beecatcher" (or any honeypot) flags the applicant as a bot.
+    if (/captcha|honeypot|recaptcha|hcaptcha|beecatcher/i.test(`${name} ${el.id} ${el.className} ${el.getAttribute("data-automation-id") || ""}`)) continue;
     if (el.closest("[class*='captcha' i]")) continue;
     // "Autofill from resume" panes (Ashby, Greenhouse) are shortcuts, not questions.
     if (el.closest("[class*='autofill' i]")) continue;
