@@ -286,6 +286,48 @@ class TestGPA(unittest.TestCase):
         self.assertEqual((again["four"]["value"], again["rng"]["value"]), ("3.6", "3.5 - 4.0"))
 
 
+class TestHowHeard(unittest.TestCase):
+    """'How did you hear about us?' with sub-options: combined labels, categories, follow-ups."""
+
+    def setUp(self):
+        self.store = fresh_store(with_profile=True, owner=self)   # default source: LinkedIn
+        self.app = self.store.start_application("Acme", "Engineer")
+
+    def value(self, label, options, app=None):
+        out = Resolver(self.store, app or self.app, today=TODAY).resolve(
+            [{"id": "h", "label": label, "type": "select", "options": options}])["fields"][0]
+        return out.get("value"), out.get("question_id")
+
+    def test_combined_labels_prefer_the_likely_category(self):
+        self.assertEqual(self.value("How did you hear about us?",
+                                    ["Job Board: Indeed", "Social Media: LinkedIn", "Job Board: LinkedIn", "Other"]),
+                         ("Job Board: LinkedIn", "how_heard"))
+        self.assertEqual(self.value("Source", ["LinkedIn", "Indeed", "Company Website"])[0], "LinkedIn")
+
+    def test_two_step_category_then_detail(self):
+        self.assertEqual(self.value("How did you find this job?", ["Company Website", "Job Board", "Referral", "Other"]),
+                         ("Job Board", "how_heard"))
+        self.assertEqual(self.value("Which job board?", ["Indeed", "LinkedIn", "Glassdoor"]),
+                         ("LinkedIn", "how_heard_detail"))
+
+    def test_categories_for_other_sources(self):
+        options = ["Job Boards / Websites", "Social Media", "Employee Referral", "University / Career Fair",
+                   "Company Careers Page", "Recruiter"]
+        cases = {"Indeed": "Job Boards / Websites", "Twitter": "Social Media", "Employee referral": "Employee Referral",
+                 "Career fair": "University / Career Fair", "Company website": "Company Careers Page",
+                 "Recruiter": "Recruiter"}
+        for source, want in cases.items():
+            app = self.store.start_application("Acme", "Engineer", source=source)
+            self.assertEqual(self.value("How did you hear about us?", options, app)[0], want, source)
+
+    def test_postal_code_is_required_and_matched(self):
+        self.assertIn("address.postal_code", fresh_store(owner=self).status()["missing_required"])
+        out = Resolver(self.store, self.app, today=TODAY).resolve(
+            [{"id": "z", "label": "ZIP / Postal code (5 digits)", "type": "text"},
+             {"id": "p", "label": "Post Code", "type": "text"}])["fields"]
+        self.assertEqual([f.get("value") for f in out], ["53703", "53703"])
+
+
 class TestPronouns(unittest.TestCase):
     """Pronoun dropdowns: one stored choice, matched to whatever wording the form uses."""
 

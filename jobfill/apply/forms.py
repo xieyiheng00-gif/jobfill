@@ -10,19 +10,29 @@ from ..text import normalize
 EXTRACT_JS = (Path(__file__).with_name("extract.js")).read_text(encoding="utf-8")
 
 # Visible options of an open dropdown: the listbox the input controls, else any visible listbox.
+# Options under a group heading read as "Group: Option"; each is tagged data-jobfill-opt=<n> so the
+# n-th text can be clicked even when two options share a label.
 OPTIONS_JS = r"""(id) => {
   const el = document.querySelector(`[data-jobfill-id="${id}"]`);
   const shown = (n) => n && n.getClientRects().length > 0 && getComputedStyle(n).visibility !== "hidden";
+  const clean = (s) => (s || "").replace(/\s+/g, " ").trim();
   let boxes = [];
   for (const attr of ["aria-controls", "aria-owns"]) {
     const ref = el && el.getAttribute(attr);
     if (ref && document.getElementById(ref)) boxes.push(document.getElementById(ref));
   }
   if (!boxes.length) boxes = Array.from(document.querySelectorAll("[role=listbox]")).filter(shown);
-  const opts = [];
-  for (const b of boxes) for (const o of b.querySelectorAll("[role=option]")) if (shown(o)) opts.push(o.textContent.replace(/\s+/g, " ").trim());
-  if (!opts.length) for (const o of document.querySelectorAll("[role=option]")) if (shown(o)) opts.push(o.textContent.replace(/\s+/g, " ").trim());
-  return opts;
+  let found = [];
+  for (const b of boxes) found.push(...Array.from(b.querySelectorAll("[role=option]")).filter(shown));
+  if (!found.length) found = Array.from(document.querySelectorAll("[role=option]")).filter(shown);
+  document.querySelectorAll("[data-jobfill-opt]").forEach((o) => o.removeAttribute("data-jobfill-opt"));
+  return found.map((o, i) => {
+    o.setAttribute("data-jobfill-opt", String(i));
+    const group = o.parentElement && o.parentElement.closest("[role=group], [class*='group' i]");
+    const head = group && group.querySelector("[class*='group-heading' i], [class*='groupHeading'], [role=presentation]");
+    const heading = head && !head.contains(o) && !head.querySelector("[role=option]") ? clean(head.textContent) : "";
+    return heading ? `${heading}: ${clean(o.textContent)}` : clean(o.textContent);
+  });
 }"""
 
 NOT_AN_OPTION = re.compile(r"^(no options?|no results?( found)?|loading\.*|type to search|start typing|searching\.*|"
@@ -124,20 +134,20 @@ def _fill_combobox(frame, loc, field_id: str, value) -> tuple[bool, str]:
             loc.fill("")
         except Exception:
             pass
-        loc.type(v[:60], delay=15)
+        # "Job Board: LinkedIn" is a grouped option: the menu filters on the option's own text.
+        loc.type(v.rsplit(": ", 1)[-1][:60], delay=15)
         texts: list[str] = []
         for _ in range(16):  # up to ~4s for async (search-as-you-type) dropdowns
             frame.wait_for_timeout(250)
-            texts = [t for t in frame.evaluate(OPTIONS_JS, field_id) if not NOT_AN_OPTION.match(t)]
-            if texts:
+            texts = frame.evaluate(OPTIONS_JS, field_id)
+            if any(not NOT_AN_OPTION.match(t) for t in texts):
                 break
-        i = _best_option(texts, v)
+        i = _best_option([t if not NOT_AN_OPTION.match(t) else "" for t in texts], v)
         if i is None:
             loc.press("Escape")
             return False, f"no dropdown option matches {v!r}" + (f" (saw {texts[:5]})" if texts else "")
-        opt = frame.locator("[role=option]:visible").filter(has_text=texts[i]).first
         try:
-            opt.click(timeout=3000)
+            frame.locator(f'[data-jobfill-opt="{i}"]').click(timeout=3000)
         except Exception:
             loc.press("Enter")
         frame.wait_for_timeout(150)
@@ -180,8 +190,13 @@ def fill(frame, f: dict, value, *, root: Path, after=None, custom=None) -> tuple
                 return False, f"file not found: {path}"
             loc.set_input_files(str(path))
         elif kind == "select":
-            values = value if isinstance(value, list) else [value]
-            loc.select_option(label=[str(v) for v in values] if f.get("multiple") else str(values[0]), timeout=5000)
+            values = [str(v) for v in (value if isinstance(value, list) else [value])]
+            if f.get("option_index") and all(v in f["options"] for v in values):
+                # By position: grouped options ("Job Board: LinkedIn") show only "LinkedIn" in the page.
+                index = [f["option_index"][f["options"].index(v)] for v in values]
+                loc.select_option(index=index if f.get("multiple") else index[0], timeout=5000)
+            else:
+                loc.select_option(label=values if f.get("multiple") else values[0], timeout=5000)
         elif kind == "buttons":
             refs = dict((label, ref) for label, ref in f["option_refs"])
             if str(value) not in refs:

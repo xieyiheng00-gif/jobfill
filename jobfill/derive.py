@@ -727,10 +727,71 @@ def application_role(ctx):
 
 
 @rule
-def how_heard(ctx):
-    if ctx.app and ctx.app.get("source"):
-        return Answer(ctx.app["source"])
-    return Answer(ctx.fact("source.how_heard_default"))
+def how_heard(ctx, detail=False):
+    """Where the candidate found the job, matched to however the form structures its options:
+    flat ("LinkedIn"), combined ("Job Board: LinkedIn", also optgroups and grouped menus, read as
+    "Group: Option"), or two steps (pick "Job Board" here; ``detail`` answers "Which job board?")."""
+    source = (ctx.app or {}).get("source") or ctx.fact("source.how_heard_default")
+    options = ctx.field.get("options") or []
+    if not options:
+        return Answer(source)
+    labels = [option_label(o) for o in options]
+    norms = [normalize(l) for l in labels]
+    cats = source_categories(source)
+    named = [i for i, n in enumerate(norms) if phrase_in(normalize(source), n) or (n and phrase_in(n, normalize(source)))]
+    if named:
+        def rank(i):   # under the source's most likely category first ("Job Board: LinkedIn" before "Social Media: ...")
+            hit = [k for k, c in enumerate(cats) if any(phrase_in(normalize(w), norms[i]) for w in CATEGORY_WORDS[c])]
+            return (min(hit) if hit else len(cats), len(norms[i]))
+        return Answer(labels[min(named, key=rank)])
+    if not detail:
+        for c in cats:   # first step of a two-level question: the category; its follow-up gets the name
+            # The most specific wording wins: "Company Careers Page" over "Job Boards / Websites".
+            scored = [(max((len(w) for w in CATEGORY_WORDS[c] if phrase_in(normalize(w), n)), default=0), -i)
+                      for i, n in enumerate(norms)]
+            best, neg_i = max(scored)
+            if best:
+                return Answer(labels[-neg_i])
+    return Answer(source)   # nothing fits: the resolver asks which option
+
+
+# Category options forms use, and the sources that belong to each.
+CATEGORY_WORDS = {
+    "job board": ["job board", "job boards", "job site", "job sites", "job website", "job search site",
+                  "online job board", "job posting site", "job listing", "job boards websites"],
+    "social media": ["social media", "social network", "social networking"],
+    "company website": ["company website", "careers page", "career site", "careers site", "careers website",
+                        "our website", "company careers", "corporate website", "website"],
+    "referral": ["referral", "referred", "employee referral", "friend", "colleague"],
+    "recruiter": ["recruiter", "agency", "headhunter", "recruiting firm", "staffing"],
+    "university": ["university", "college", "campus", "career fair", "career services", "school", "handshake"],
+    "search engine": ["search engine", "google search", "web search"],
+    "event": ["event", "conference", "meetup", "career fair", "hackathon"],
+    "online": ["online", "internet", "online ad", "online advertisement", "web"],
+}
+_SOURCE_CATEGORIES = [
+    (("linkedin",), ["job board", "social media", "online"]),
+    (("indeed", "glassdoor", "ziprecruiter", "monster", "dice", "built in", "builtin", "wellfound", "angellist",
+      "simplify", "hired", "otta", "welcome to the jungle", "jobright", "levels fyi", "careerbuilder"),
+     ["job board", "online"]),
+    (("handshake",), ["university", "job board", "online"]),
+    (("company website", "careers page", "career site", "company site", "website"), ["company website", "online"]),
+    (("referral", "referred", "employee", "friend", "colleague"), ["referral"]),
+    (("recruiter", "agency", "headhunter"), ["recruiter"]),
+    (("career fair", "university", "college", "campus", "school", "career services"), ["university", "event"]),
+    (("twitter", "x com", "facebook", "instagram", "youtube", "tiktok", "reddit", "wechat", "xiaohongshu"),
+     ["social media", "online"]),
+    (("google", "bing", "search"), ["search engine", "online"]),
+    (("conference", "meetup", "hackathon", "event"), ["event"]),
+]
+
+
+def source_categories(source: str) -> list[str]:
+    n = normalize(source)
+    for keys, cats in _SOURCE_CATEGORIES:
+        if any(phrase_in(normalize(k), n) for k in keys):
+            return cats
+    return [c for c, words in CATEGORY_WORDS.items() if any(phrase_in(normalize(w), n) for w in words)] or ["online"]
 
 
 @rule

@@ -220,9 +220,15 @@
     if (el.maxLength > 0 && el.maxLength < 100000) f.max_chars = el.maxLength;
     if (kind === "select") {
       f.multiple = el.multiple;
-      f.options = Array.from(el.options)
-        .filter((o) => !o.disabled && o.value !== "" && clean(o.text) && !/^(select|choose|please select|--)/i.test(clean(o.text)))
-        .map((o) => clean(o.text));
+      // Options inside <optgroup> read as "Group: Option" (two "LinkedIn"s under "Job Board" and
+      // "Social Media" stay distinguishable); option_index points back at the real option to select.
+      f.options = []; f.option_index = [];
+      Array.from(el.options).forEach((o, i) => {
+        if (o.disabled || o.value === "" || !clean(o.text) || /^(select|choose|please select|--)/i.test(clean(o.text))) return;
+        const group = o.parentElement && o.parentElement.tagName === "OPTGROUP" ? clean(o.parentElement.label) : "";
+        f.options.push(group ? `${group}: ${clean(o.text)}` : clean(o.text));
+        f.option_index.push(i);
+      });
       const sel = el.selectedOptions && el.selectedOptions[0];
       f.value = sel && sel.value !== "" ? clean(sel.text) : "";
     } else if (kind === "checkbox") {

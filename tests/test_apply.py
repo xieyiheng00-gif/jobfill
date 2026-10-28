@@ -186,6 +186,20 @@ class TestFiller(unittest.TestCase):
         self.assertEqual(by_label["Veteran Status"]["value"], "I am not a protected veteran")
         self.assertEqual(page.input_value("#question_3"), "June 1, 2027")   # plain-English question, readable date
 
+    def test_source_question_shapes(self):
+        page, report, summary = self.run_fixture("source_like.html", "generic", "Acme")
+        self.assertNotIn("fill_failed", summary)
+        got = page.evaluate("""() => ({
+            combined: document.querySelector('#s1').selectedOptions[0].text,
+            optgroup: document.querySelector('#s2').selectedOptions[0].parentElement.label + ' / ' +
+                      document.querySelector('#s2').selectedOptions[0].text,
+            category: document.querySelector('#s3').selectedOptions[0].text,
+            detail: document.querySelector('#s3b') && document.querySelector('#s3b').selectedOptions[0].text,
+            menu: document.querySelector('.select__single-value').textContent + ' / ' + window.pickedGroup})""")
+        self.assertEqual(got, {"combined": "Job Board: LinkedIn", "optgroup": "Job Board / LinkedIn",
+                               "category": "Job Board", "detail": "LinkedIn", "menu": "LinkedIn / Job Board"})
+        self.assertEqual(report["passes"], 2)   # the follow-up appeared after the category was picked
+
     def test_icims_email_gate_respects_consent_and_dry_run(self):
         store = fresh_store(with_profile=True, owner=self)
         page = self.browser.new_page()

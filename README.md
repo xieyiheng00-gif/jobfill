@@ -34,7 +34,8 @@ Rules derive answers instead of storing every variant: "Are you authorized to wo
 dropdowns included), "Have you applied to {company} before?", "Do you have relatives at
 {company}?", "Highest degree", "Are you comfortable working in office 3 days a week?", GPA as an exact
 number, a range ("3.5 - 4.0", "3.75 and above") or a threshold ("Is your GPA 3.0 or higher?") without
-ever passing a 10-point GPA off as a 4.0 one, and so on.
+ever passing a 10-point GPA off as a 4.0 one, "How did you hear about us?" in flat, combined
+("Job Board: LinkedIn"), grouped or two-step form (pick "Job Board", then "Which job board?"), and so on.
 
 ## Quick start
 

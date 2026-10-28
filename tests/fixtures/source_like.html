@@ -1,0 +1,59 @@
+<!doctype html>
+<html><head><meta charset="utf-8"><title>Source questions - Acme</title></head>
+<body>
+<!-- "How did you hear about us?" in the shapes ATS forms use: combined labels, optgroups,
+     a two-step category + follow-up, and a grouped React-Select-style menu. -->
+<form id="application-form">
+  <div><label for="s1">How did you hear about us?</label>
+    <select id="s1"><option value="">Select...</option><option>Job Board: Indeed</option>
+      <option>Social Media: LinkedIn</option><option>Job Board: LinkedIn</option><option>Referral: Employee</option>
+      <option>Company Website</option></select></div>
+
+  <div><label for="s2">Source</label>
+    <select id="s2"><option value="">Select...</option>
+      <optgroup label="Social Media"><option>LinkedIn</option><option>Twitter</option></optgroup>
+      <optgroup label="Job Board"><option>Indeed</option><option>LinkedIn</option></optgroup></select></div>
+
+  <div><label for="s3">How did you find this job?</label>
+    <select id="s3"><option value="">Select...</option><option>Company Website</option><option>Job Board</option>
+      <option>Referral</option><option>Other</option></select>
+    <div id="s3-detail"></div></div>
+
+  <div class="select__container"><label id="s4-label" for="s4">How did you learn about this opportunity?</label>
+    <div class="select__control"><div class="select__single-value"></div>
+      <input id="s4" role="combobox" aria-labelledby="s4-label" aria-controls="s4-list" autocomplete="off"></div>
+    <div id="s4-list" role="listbox" style="display:none"></div></div>
+</form>
+<script>
+document.getElementById("s3").addEventListener("change", (e) => {
+  const slot = document.getElementById("s3-detail");
+  slot.innerHTML = e.target.value !== "Job Board" ? "" :
+    '<label for="s3b">Which job board?</label><select id="s3b"><option value="">Select...</option>' +
+    "<option>Indeed</option><option>LinkedIn</option><option>Glassdoor</option></select>";
+});
+// Grouped menu: a heading per group, options under it, filtered by the typed text.
+const groups = {"Social Media": ["LinkedIn", "Twitter"], "Job Board": ["Indeed", "LinkedIn"]};
+const input = document.getElementById("s4"), list = document.getElementById("s4-list");
+const shown = input.parentElement.querySelector(".select__single-value");
+const render = () => {
+  const q = input.value.toLowerCase();
+  list.innerHTML = "";
+  for (const [group, items] of Object.entries(groups)) {
+    const hits = items.filter((o) => o.toLowerCase().includes(q));
+    if (!hits.length) continue;
+    const box = document.createElement("div"); box.className = "select__group";
+    box.innerHTML = `<div class="select__group-heading">${group}</div>`;
+    for (const o of hits) {
+      const d = document.createElement("div"); d.setAttribute("role", "option"); d.textContent = o;
+      d.addEventListener("click", () => { shown.textContent = o; window.pickedGroup = group; input.value = "";
+                                          list.style.display = "none"; });
+      box.appendChild(d);
+    }
+    list.appendChild(box);
+  }
+  list.style.display = list.children.length ? "block" : "none";
+};
+input.addEventListener("click", render); input.addEventListener("input", render);
+input.addEventListener("keydown", (e) => { if (e.key === "Escape") list.style.display = "none"; });
+</script>
+</body></html>

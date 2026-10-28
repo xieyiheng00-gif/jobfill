@@ -70,7 +70,7 @@ FACTS = [
     F("address.city", 1, "string", "City", "City you live in", setup="required"),
     F("address.state", 1, "string", "State / province", "State or province (e.g. WI or Wisconsin)",
       setup="required"),
-    F("address.postal_code", 1, "string", "Postal code", "ZIP / postal code", setup="recommended"),
+    F("address.postal_code", 1, "string", "Postal code", "ZIP / postal code", setup="required"),
     F("address.country", 1, "string", "Country of residence", "Country you live in", setup="required"),
 
     # ---------------------------------------------------------------- work authorization (tier 1)
