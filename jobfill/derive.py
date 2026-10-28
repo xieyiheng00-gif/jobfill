@@ -14,16 +14,17 @@ from dataclasses import dataclass
 from datetime import date
 
 from .catalog import DEGREE_RANK, choice_set
-from .text import (canonical_country, choose_text_option, classify_option, company_key as _company_key,
-                   format_date, normalize, option_label, parse_date, phrase_in)
+from .text import (canonical_country, choose_range_option, choose_text_option, classify_option,
+                   company_key as _company_key, normalize, option_label, parse_date, phrase_in)
 
 
 @dataclass
 class Answer:
     value: object
     choices: str | None = None   # choice set used to map the value onto form options
-    kind: str | None = None      # "country" / "state" for text-option matching
+    kind: str | None = None      # "country" / "state" for text-option matching, "date" for dates
     source: str = ""
+    fmt: str | None = None       # preferred date format when the field itself does not say
 
 
 class NeedFact(Exception):
@@ -139,8 +140,7 @@ def signature_name(ctx):
 
 @rule
 def today(ctx, format=None):
-    iso = ctx.today.isoformat()
-    return Answer(format_date(iso, format) if format else iso)
+    return Answer(ctx.today.isoformat(), kind="date", fmt=format)
 
 
 @rule
@@ -337,16 +337,107 @@ def graduation_date(ctx, format=None):
     if not edu or not edu[0].get("end_date"):
         raise NeedUser("What is your (expected) graduation date? Add end_date to your latest education record.",
                        store={"record": "education"})
-    end = edu[0]["end_date"]
-    return Answer(format_date(end, format) if format else end)
+    return Answer(edu[0]["end_date"], kind="date", fmt=format)
+
+
+_NUM = r"(\d+(?:\.\d+)?)"
+
+
+def parse_gpa(raw, scale=None) -> tuple[float, float] | None:
+    """'3.8' / '3.80/4.0' / '9.1 out of 10' (+ a separate scale field) -> (value, scale).
+
+    Without a stated scale: 4.0 when the value fits, else the smallest common scale that does.
+    """
+    m = re.search(rf"{_NUM}\s*(?:/|out of|of)\s*{_NUM}", str(raw or ""))
+    if m:
+        return float(m.group(1)), float(m.group(2))
+    m = re.search(_NUM, str(raw or ""))
+    if not m:
+        return None
+    value = float(m.group(1))
+    if scale not in (None, ""):
+        s = re.search(_NUM, str(scale))
+        if s:
+            return value, float(s.group(1))
+    return value, next(s for s in (4.0, 4.3, 5.0, 10.0, 20.0, 100.0) if value <= s) if value <= 100 else value
+
+
+def _target_scale(field: dict) -> float | None:
+    """The scale a form wants: 'out of 4.0', '(4.0 scale)', '3.5/4.0', or the numbers in its options."""
+    text = f"{field.get('label', '')} {field.get('placeholder') or ''}"
+    m = (re.search(rf"(?:out of|on an?|scale of|/)\s*{_NUM}", text, re.I)
+         or re.search(rf"{_NUM}[\s-]*(?:point )?scale", text, re.I))
+    if m:
+        return float(m.group(1))
+    nums = [float(n) for o in field.get("options") or [] for n in re.findall(_NUM, option_label(o))]
+    if nums:
+        return next((s for s in (4.0, 4.3, 5.0, 10.0, 100.0) if max(nums) <= s + 0.01), None)
+    return None
+
+
+def _gpa_record(ctx, level=None) -> dict | None:
+    edu = ctx.records("education")
+    if level:
+        return next((r for r in edu if _degree_level(r) == level or (level == "master" and _degree_level(r) == "mba")),
+                    None)
+    i = int(ctx.field.get("index") or 0)
+    return edu[i] if i < len(edu) else None
+
+
+def _gpa_on(ctx, r: dict, want: float | None) -> float | None:
+    """GPA on the form's scale. Scales are never converted by formula: a 9.1/10 is not a 3.64/4.0 to every
+    school, so a different scale is asked once and kept as ``gpa_4`` on the record."""
+    value, scale = parse_gpa(r.get("gpa"), r.get("gpa_scale"))
+    if want is None or abs(want - scale) < 0.01:
+        return value
+    if abs(want - 4.0) < 0.01 and r.get("gpa_4") not in (None, ""):
+        return parse_gpa(r["gpa_4"], 4.0)[0]
+    raise NeedUser(f"Your GPA at {r.get('school')} is {r.get('gpa')} on a {scale:g} scale, but this form asks on a "
+                   f"{want:g} scale. What should be entered? (Use your school's official conversion if it has one.)",
+                   store={"record": "education", "id": r.get("_id"), "field": "gpa_4"})
 
 
 @rule
-def gpa_for_level(ctx, level):
-    for r in ctx.records("education"):
-        if _degree_level(r) == level or (level == "master" and _degree_level(r) == "mba"):
-            return Answer(r.get("gpa"))
-    return Answer(None)
+def education_gpa(ctx, level=None):
+    r = _gpa_record(ctx, level)
+    if not r or r.get("gpa") in (None, ""):
+        return Answer(None)
+    options = ctx.field.get("options") or []
+    value = _gpa_on(ctx, r, _target_scale(ctx.field))
+    if options:
+        # Range dropdowns ("3.5 - 4.0", "3.75 and above", "Below 3.0") or exact values ("3.8").
+        # 3.45 against "3.0 - 3.4" / "3.5 - 4.0": fall back to one decimal, rounded down, never up.
+        for v in (value, int(value * 10) / 10):
+            opt = choose_range_option(v, options)
+            if opt is not None:
+                return Answer(option_label(opt))
+        return Answer(f"{value:g}")   # no option fits: the resolver asks which one
+    _, scale = parse_gpa(r.get("gpa"), r.get("gpa_scale"))
+    if _target_scale(ctx.field) is None and abs(scale - 4.0) > 0.01:
+        if (ctx.field.get("type") or "text") == "number":
+            return Answer(f"{_gpa_on(ctx, r, 4.0):g}")   # a bare number box means the US 4.0 scale
+        return Answer(f"{value:g}/{scale:g}")           # text box: name the scale, so 9.1 is never read as /4
+    return Answer(f"{value:g}")
+
+
+_STRICT = re.compile(r"\b(above|over|greater than|higher than|more than)\b")
+_INCLUSIVE = re.compile(r"\bor (higher|above|more|better|greater)\b|\band (above|up|higher)\b|\bat least\b|\bminimum\b|\+")
+
+
+@rule
+def gpa_at_least(ctx, threshold):
+    """'Is your GPA 3.0 or higher?' against the most recent GPA (undergraduate if the label says so).
+    'above 3.0' / 'higher than 3.0' is strict; 'or higher', 'at least', 'minimum' include the threshold."""
+    strict = bool(_STRICT.search(ctx.label)) and not _INCLUSIVE.search(ctx.label)
+    level = "bachelor" if re.search(r"\bunder ?grad", ctx.label) else None
+    edu = [r for r in ctx.records("education") if r.get("gpa") not in (None, "")]
+    r = _gpa_record(ctx, level) if level else (edu[0] if edu else None)
+    if not r or r.get("gpa") in (None, ""):
+        raise NeedUser(f"The form asks whether your GPA meets {threshold}. What is your GPA?",
+                       store={"record": "education", "field": "gpa"})
+    t = float(threshold)
+    value = _gpa_on(ctx, r, 4.0 if t <= 4.3 else None)
+    return Answer(value > t if strict else value >= t, choices="bool")
 
 
 # ---------------------------------------------------------------- experience & skills

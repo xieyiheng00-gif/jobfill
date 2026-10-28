@@ -185,7 +185,7 @@ class TestLearningLoop(unittest.TestCase):
             {"id": "end", "label": "End date", "type": "text", "section": "experience", "index": 0},
             {"id": "e", "label": "Are you currently employed?", "type": "radio", "options": ["Yes", "No"]}])}
         self.assertIs(out["now"]["value"], False)
-        self.assertEqual(out["end"]["value"], "2026-08")
+        self.assertEqual(out["end"]["value"], "08/2026")
         self.assertEqual(out["e"]["value"], "No")
 
     def test_skill_record_without_years_or_level_means_yes(self):
@@ -229,6 +229,111 @@ class TestLearningLoop(unittest.TestCase):
         self.assertEqual(task["status"], "needs_ai")
         self.assertIn("stories", task["ai_context"]["candidate"])
         self.assertNotIn("projects", task["ai_context"]["candidate"])
+
+
+class TestGPA(unittest.TestCase):
+    """GPA asked as an exact number, as a range, or as a threshold; scales are never mixed up."""
+
+    YN = ["Yes", "No"]
+
+    def setUp(self):
+        self.store = fresh_store(with_profile=True, owner=self)   # M.S. 3.8/4.0 (index 0), B.S. 9.1/10 (index 1)
+        self.app = self.store.start_application("Acme", "Engineer")
+
+    def resolve(self, fields):
+        return {f["id"]: f for f in Resolver(self.store, self.app, today=TODAY).resolve(fields)["fields"]}
+
+    def test_exact_and_range(self):
+        out = self.resolve([
+            {"id": "text", "label": "GPA", "type": "text"},
+            {"id": "num", "label": "Cumulative GPA", "type": "number"},
+            {"id": "range", "label": "GPA", "type": "select",
+             "options": ["3.5 - 4.0", "3.0 - 3.49", "2.5 - 2.99", "Below 2.5", "Prefer not to say"]},
+            {"id": "plus", "label": "What is your cumulative GPA?", "type": "select",
+             "options": ["3.75 and above", "3.50 - 3.74", "3.25 - 3.49", "Below 3.25"]},
+            {"id": "exact", "label": "GPA", "type": "select", "options": ["4.0", "3.9", "3.8", "3.7"]}])
+        self.assertEqual({k: v["value"] for k, v in out.items()},
+                         {"text": "3.8", "num": "3.8", "range": "3.5 - 4.0", "plus": "3.75 and above", "exact": "3.8"})
+
+    def test_value_between_one_decimal_ranges_rounds_down(self):
+        rid = self.store.records("education")[0]["_id"]
+        self.store.update_record(rid, {"gpa": "3.45"})
+        out = self.resolve([{"id": "g", "label": "GPA", "type": "select", "options": ["3.5 - 4.0", "3.0 - 3.4", "Below 3.0"]}])
+        self.assertEqual(out["g"]["value"], "3.0 - 3.4")   # never rounded up into 3.5 - 4.0
+
+    def test_threshold_questions(self):
+        out = self.resolve([
+            {"id": "a", "label": "Is your cumulative GPA 3.0 or higher?", "type": "radio", "options": self.YN},
+            {"id": "b", "label": "Do you have a minimum GPA of 3.9?", "type": "radio", "options": self.YN},
+            {"id": "c", "label": "Do you have a 3.5 GPA or higher?", "type": "radio", "options": self.YN},
+            {"id": "d", "label": "Is your GPA above 3.8?", "type": "radio", "options": self.YN}])
+        self.assertEqual({k: (v["question_id"], v["value"]) for k, v in out.items()},
+                         {"a": ("gpa_threshold", "Yes"), "b": ("gpa_threshold", "No"),
+                          "c": ("gpa_threshold", "Yes"), "d": ("gpa_threshold", "No")})   # "above 3.8" is strict
+
+    def test_other_scales_are_never_passed_off_as_4_0(self):
+        out = self.resolve([
+            {"id": "text", "label": "Undergraduate GPA", "type": "text"},
+            {"id": "row", "label": "GPA", "type": "text", "section": "education", "index": 1},
+            {"id": "four", "label": "Undergraduate GPA (out of 4.0)", "type": "text", "required": True}])
+        self.assertEqual((out["text"]["value"], out["row"]["value"]), ("9.1/10", "9.1/10"))
+        self.assertEqual((out["four"]["status"], out["four"]["store"]["field"]), ("needs_user", "gpa_4"))
+        # The candidate answers once; every 4.0-scale form uses it from then on.
+        self.store.update_record(out["four"]["store"]["id"], {"gpa_4": "3.6"})
+        again = self.resolve([{"id": "four", "label": "Undergraduate GPA (out of 4.0)", "type": "text"},
+                              {"id": "rng", "label": "Undergraduate GPA", "type": "select",
+                               "options": ["3.5 - 4.0", "3.0 - 3.49", "Below 3.0"]}])
+        self.assertEqual((again["four"]["value"], again["rng"]["value"]), ("3.6", "3.5 - 4.0"))
+
+
+class TestPronouns(unittest.TestCase):
+    """Pronoun dropdowns: one stored choice, matched to whatever wording the form uses."""
+
+    GREENHOUSE = ["He/Him", "She/Her", "They/Them", "Xe/Xem", "Ze/Hir", "Use my name",
+                  "I prefer to self-describe", "I don't wish to answer"]
+
+    def setUp(self):
+        self.store = fresh_store(with_profile=True, owner=self)   # sample profile: "they/them"
+        self.app = self.store.start_application("Acme", "Engineer")
+
+    def resolve(self, field):
+        return Resolver(self.store, self.app, today=TODAY).resolve([{"id": "p", **field}])["fields"][0]
+
+    def test_dropdown_wordings(self):
+        self.assertEqual(self.store.get_fact("identity.pronouns"), ["they_them"])
+        self.assertEqual(self.resolve({"label": "Pronouns", "type": "select", "options": self.GREENHOUSE})["value"],
+                         "They/Them")
+        for stored, options, want in (
+                ("she/her", ["She / Her / Hers", "He / Him / His", "They / Them / Theirs"], "She / Her / Hers"),
+                ("he/they", ["He/Him", "He/They", "They/Them"], "He/They"),
+                ("decline", self.GREENHOUSE, "I don't wish to answer"),
+                ("use my name", self.GREENHOUSE, "Use my name")):
+            self.store.set_fact("identity.pronouns", stored)
+            self.assertEqual(self.resolve({"label": "What are your pronouns?", "type": "select", "options": options})
+                             ["value"], want, stored)
+
+    def test_text_box_and_checkboxes(self):
+        self.assertEqual(self.resolve({"label": "Pronouns (optional)", "type": "text"})["value"], "they/them")
+        self.store.set_fact("identity.pronouns", "she/her, they/them")
+        out = self.resolve({"label": "Pronouns (select all that apply)", "type": "checkbox",
+                            "options": ["He/Him", "She/Her", "They/Them"]})
+        self.assertEqual(out["value"], ["She/Her", "They/Them"])
+
+    def test_asked_once_when_a_form_has_it(self):
+        self.store.unset_fact("identity.pronouns")
+        out = self.resolve({"label": "Pronouns", "type": "select", "options": self.GREENHOUSE})
+        self.assertEqual((out["status"], out["fact"], out["sensitive"]), ("needs_user", "identity.pronouns", True))
+        self.assertIn("decline", out["choices"])
+
+    def test_pronunciation_is_not_pronouns(self):
+        out = self.resolve({"label": "Name Pronunciation | How do you pronounce your name?", "type": "text"})
+        self.assertNotEqual(out.get("question_id"), "pronouns")
+
+    def test_old_free_text_value_is_converted(self):
+        from jobfill import db
+        self.store.conn.execute("UPDATE facts SET value='\"She/Her\"' WHERE key='identity.pronouns'")
+        db.seed(self.store.conn)
+        self.assertEqual(self.store.get_fact("identity.pronouns"), ["she_her"])
 
 
 if __name__ == "__main__":

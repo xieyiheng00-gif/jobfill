@@ -299,22 +299,167 @@ _MONTHS = ["January", "February", "March", "April", "May", "June", "July", "Augu
            "October", "November", "December"]
 
 
+_MONTH_NAME = re.compile(r"\b(jan|feb|mar|apr|may|jun|jul|aug|sep|oct|nov|dec)[a-z]*\.?", re.I)
+_MONTH_INDEX = {m[:3].lower(): i + 1 for i, m in enumerate(_MONTHS)}
+ONGOING = re.compile(r"^\s*(present|current|currently|now|ongoing|today|to date)\s*$", re.I)
+
+
+def _valid(y: int, mo: int | None, d: int | None):
+    if not 1900 <= y <= 2100 or (mo is not None and not 1 <= mo <= 12):
+        return None
+    if d is not None:
+        try:
+            date(y, mo or 1, d)
+        except ValueError:
+            return None
+    return y, mo, d
+
+
 def parse_date(value) -> tuple[int, int | None, int | None] | None:
+    """Read a date written almost any common way; returns (year, month|None, day|None).
+
+    Accepts 2025, 2025-09, 2025/9, 2025.09.01, 9/2025, 09-2025, 09/01/2025 (US month first; day first
+    when the first number is over 12), Sep 2025, Sep/2025, Sep,2025, September 1, 2025, 1 Sep 2025,
+    2025 Sep. Two-digit years are rejected as ambiguous.
+    """
     if isinstance(value, date):
         return value.year, value.month, value.day
-    m = re.match(r"^\s*(\d{4})(?:-(\d{1,2}))?(?:-(\d{1,2}))?\s*$", str(value or ""))
-    if not m:
+    s = str(value or "").strip()
+    if not s:
         return None
-    y, mo, d = m.groups()
-    return int(y), int(mo) if mo else None, int(d) if d else None
+    if m := re.fullmatch(r"(\d{4})(?:\s*[-/.]\s*(\d{1,2})(?:\s*[-/.]\s*(\d{1,2}))?)?", s):
+        y, mo, d = m.groups()
+        return _valid(int(y), int(mo) if mo else None, int(d) if d else None)
+    if m := re.fullmatch(r"(\d{1,2})\s*[-/.]\s*(\d{1,2})\s*[-/.]\s*(\d{4})", s):
+        a, b, y = map(int, m.groups())
+        mo, d = (b, a) if a > 12 >= b else (a, b)
+        return _valid(y, mo, d)
+    if m := re.fullmatch(r"(\d{1,2})\s*[-/.]\s*(\d{4})", s):
+        return _valid(int(m.group(2)), int(m.group(1)), None)
+    name, year = _MONTH_NAME.search(s), re.search(r"\b(19|20)\d{2}\b", s)
+    if name and year:
+        rest = (s[:name.start()] + " " + s[name.end():]).replace(year.group(0), " ")
+        day = re.search(r"\b(\d{1,2})(st|nd|rd|th)?\b", rest)
+        return _valid(int(year.group(0)), _MONTH_INDEX[name.group(1).lower()], int(day.group(1)) if day else None)
+    return None
 
 
-def format_date(value, fmt: str | None) -> str:
-    """Format an ISO date with tokens YYYY YY MMMM MMM MM M DD D. Unknown input passes through."""
+def iso_date(value) -> str | None:
+    """Canonical storage form, keeping the precision given: 2025 / 2025-09 / 2025-09-01."""
+    p = parse_date(value)
+    if p is None:
+        return None
+    y, mo, d = p
+    return f"{y:04d}" + (f"-{mo:02d}" if mo else "") + (f"-{d:02d}" if mo and d else "")
+
+
+def month_number(text: str) -> int | None:
+    """'September', 'Sep', 'Sept.', '09', '9', '09 - September' -> 9."""
+    if m := _MONTH_NAME.search(text or ""):
+        return _MONTH_INDEX[m.group(1).lower()]
+    if m := re.fullmatch(r"\s*0?(\d{1,2})\s*", text or ""):
+        n = int(m.group(1))
+        return n if 1 <= n <= 12 else None
+    return None
+
+
+_FMT_TOKEN = r"(?:yyyy|yy|mmmm|month|mmm|mon|mm|m|dd|d)"
+_FMT_RE = re.compile(rf"(?<![a-z]){_FMT_TOKEN}(?:\s*[/\-., ]\s*{_FMT_TOKEN}){{1,2}}(?![a-z])", re.I)
+_FMT_MAP = {"yyyy": "YYYY", "yy": "YY", "mmmm": "MMMM", "month": "MMMM", "mmm": "MMM", "mon": "MMM",
+            "mm": "MM", "m": "M", "dd": "DD", "d": "D"}
+
+
+def detect_date_format(*texts: str | None) -> str | None:
+    """The date format a form asks for, from its label or placeholder.
+
+    Token style ("MM/YYYY", "mm/dd/yyyy", "Month YYYY") or an example ("e.g. 09/2025", "Sep 2025").
+    """
+    for text in texts:
+        if not text:
+            continue
+        for m in _FMT_RE.finditer(text):
+            raw = m.group(0)
+            tokens = re.findall(_FMT_TOKEN, raw, re.I)
+            low = [t.lower() for t in tokens]
+            if not any(t.startswith("y") for t in low) or not any(t[0] == "m" for t in low):
+                continue   # needs a year and a month, so "m d" in prose is not a format
+            return re.sub(_FMT_TOKEN, lambda t: _FMT_MAP[t.group(0).lower()], raw, flags=re.I)
+        for pattern, fmt in ((r"\b\d{1,2}/\d{1,2}/\d{4}\b", "MM/DD/YYYY"), (r"\b\d{4}-\d{2}-\d{2}\b", "YYYY-MM-DD"),
+                             (r"\b\d{1,2}/\d{4}\b", "MM/YYYY"), (r"\b\d{4}-\d{1,2}\b", "YYYY-MM"),
+                             (r"\b\d{4}/\d{1,2}\b", "YYYY/MM")):
+            if re.search(pattern, text):
+                return fmt
+        if m := re.search(r"\b(jan|feb|mar|apr|may|jun|jul|aug|sep|oct|nov|dec)([a-z]*)\.?,?\s+(19|20)\d{2}\b", text, re.I):
+            sep = "," if "," in m.group(0) else ""
+            return ("MMMM" if len(m.group(1) + m.group(2)) > 4 else "MMM") + sep + " YYYY"
+    return None
+
+
+def strip_date_format(text: str) -> str:
+    """Remove format hints from a label: 'Start (MM/YYYY)' -> 'Start', 'Date e.g. 09/2025' -> 'Date'."""
+    def is_format(m):
+        low = [t.lower() for t in re.findall(_FMT_TOKEN, m.group(0), re.I)]
+        return any(t.startswith("y") for t in low) and any(t[0] == "m" for t in low)
+    out = _FMT_RE.sub(lambda m: " " if is_format(m) else m.group(0), text or "")
+    out = re.sub(r"\b(e\.?g\.?|format:?|for example)\s*[\d/.\-]+", " ", out, flags=re.I)
+    out = re.sub(r"\(\s*\)", " ", out)
+    return " ".join(out.split())
+
+
+def date_part(label: str, options: list | None = None) -> str | None:
+    """Which piece of a date a field wants: 'month', 'year', 'day', or None for the whole date.
+
+    From the label ("Start month", "Graduation year"), else from the options (twelve month names, a
+    list of years). "Month/Year" or "MM/YYYY" asks for the whole date.
+    """
+    n = normalize(label)
+    asked = [p for p, rx in (("month", r"\b(month|mm|mon)\b"), ("year", r"\b(year|yyyy|yy)\b"), ("day", r"\b(day|dd)\b"))
+             if re.search(rx, n)]
+    if len(asked) == 1:
+        return asked[0]
+    if not asked and options:
+        labels = [option_label(o) for o in options]
+        if len(labels) >= 6 and sum(month_number(l) is not None and not re.search(r"\d{4}", l) for l in labels) >= 0.8 * len(labels) \
+                and len(labels) <= 13:
+            return "month"
+        if sum(bool(re.fullmatch(r"\s*(19|20)\d{2}\s*", l)) for l in labels) >= 0.8 * len(labels):
+            return "year"
+    return None
+
+
+def choose_date_option(parts: tuple, part: str | None, options: list):
+    """The dropdown option for a date (or the requested piece of it)."""
+    y, mo, d = parts
+    for opt in options:
+        lab = option_label(opt)
+        if part == "month":
+            if mo and month_number(lab) == mo:
+                return opt
+        elif part == "year":
+            if re.search(rf"(?<!\d){y}(?!\d)", lab):
+                return opt
+        elif part == "day":
+            if d and re.fullmatch(rf"\s*0?{d}(st|nd|rd|th)?\s*", lab):
+                return opt
+        else:
+            p = parse_date(lab)
+            if p and p[0] == y and (p[1] is None or p[1] == mo) and (p[2] is None or p[2] == d):
+                return opt
+    return None
+
+
+def format_date(value, fmt: str | None) -> str | None:
+    """Format a date with tokens YYYY YY MMMM MMM MM M DD D.
+
+    A missing day becomes the 1st. Returns None when the format needs a month the value does not
+    have (a year-only date cannot be written as MM/YYYY). Unparseable input passes through.
+    """
     parts = parse_date(value)
     if not fmt or parts is None:
         return str(value)
     y, mo, d = parts
+    if mo is None and re.search(r"M", fmt):
+        return None
     mo = mo or 1
     d = d or 1
     tokens = {

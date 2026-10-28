@@ -32,7 +32,9 @@ Tier-3 details:
 Rules derive answers instead of storing every variant: "Are you authorized to work in Canada?",
 "Will you now or in the future require sponsorship?", "How many years of Python experience?" (range
 dropdowns included), "Have you applied to {company} before?", "Do you have relatives at
-{company}?", "Highest degree", "Are you comfortable working in office 3 days a week?", and so on.
+{company}?", "Highest degree", "Are you comfortable working in office 3 days a week?", GPA as an exact
+number, a range ("3.5 - 4.0", "3.75 and above") or a threshold ("Is your GPA 3.0 or higher?") without
+ever passing a 10-point GPA off as a 4.0 one, and so on.
 
 ## Quick start
 
@@ -130,7 +132,11 @@ plain Python, the AI and you answered across all applications.
   `checkbox`, `multiselect`, `file`.
 - `options`: strings or `{"label", "value"}` objects. jobfill returns the option to pick.
 - `section` + `index`: repeating blocks (`education`, `experience`, `project`, `reference`), 0 = most recent.
-- `format`: date format (`YYYY`, `MM`, `DD`, `MMM`, `MMMM`). `max_chars` / `max_words`: limits for written answers.
+- `format` / `placeholder`: dates. An explicit `format` (`YYYY`, `MM`, `DD`, `MMM`, `MMMM`, e.g. `MM/YYYY`)
+  wins; otherwise jobfill reads it from the label or placeholder ("MM/YYYY", "e.g. Sep 2025"). Split fields
+  ("Start month" + "Start year", or "Month"/"Year" under a "Graduation date" heading) get just their part,
+  and month dropdowns match "September", "Sep" or "09". Defaults: `MM/YYYY` for date fields, "June 1, 2027"
+  for questions like "When can you start?". `max_chars` / `max_words`: limits for written answers.
 - `required`: optional fields with nothing stored are skipped instead of asked.
 
 Each result has a `status`: `filled` (use `value`), `needs_ai` (agent writes it from `ai_task` and

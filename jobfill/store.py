@@ -9,10 +9,14 @@ from datetime import datetime, timezone
 
 from .catalog import RECORD_KINDS, choice_set
 from .db import now
-from .text import classify_option, company_key, normalize, parse_date
+from .text import ONGOING, classify_option, company_key, iso_date, normalize
 
 TRUE_WORDS = {"yes", "y", "true", "1", "on"}
 FALSE_WORDS = {"no", "n", "false", "0", "off"}
+
+# Record fields holding dates; stored as 2025 / 2025-09 / 2025-09-01 whatever format they arrive in.
+DATE_FIELDS = {"start_date", "end_date", "date", "expires"}
+DATE_HINT = "Use any common form, e.g. 2025-09, Sep 2025, 9/2025, 2025/9 or 09/01/2025."
 
 # Records the setup flow asks for: kind -> setup level.
 RECORD_SETUP = {"education": "required", "language": "required", "experience": "recommended",
@@ -110,10 +114,10 @@ class Store:
                 raise ValidationError(f"{key} expects a number, got {value!r}") from None
             return int(n) if n == int(n) else n
         if t == "date":
-            s = str(value).strip()
-            if parse_date(s) is None:
-                raise ValidationError(f"{key} expects YYYY-MM-DD or YYYY-MM, got {value!r}")
-            return s
+            iso = iso_date(value)
+            if iso is None:
+                raise ValidationError(f"{key}: cannot read {value!r} as a date. {DATE_HINT}")
+            return iso
         if t == "list":
             if isinstance(value, str):
                 value = [v for v in (p.strip() for p in value.split(",")) if v]
@@ -210,6 +214,15 @@ class Store:
         for k, v in data.items():
             if k.startswith("_") or v is None or v == "" or v == []:
                 continue
+            if k in DATE_FIELDS:
+                if k == "end_date" and ONGOING.match(str(v)):
+                    # "Present": the job is current / the degree is still in progress.
+                    out["current" if kind == "experience" else "expected"] = True
+                    continue
+                iso = iso_date(v)
+                if iso is None:
+                    raise ValidationError(f"{kind}.{k}: cannot read {v!r} as a date. {DATE_HINT}")
+                v = iso
             if k in ("current", "expected", "is_coursework", "may_contact") and not isinstance(v, bool):
                 v = str(v).strip().lower() in TRUE_WORDS
             if k in ("years", "years_known") and isinstance(v, str):

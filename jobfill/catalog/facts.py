@@ -45,11 +45,12 @@ FACTS = [
     F("identity.preferred_name", 1, "string", "Preferred first name",
       "Do you go by a different first name than your legal one? (e.g. 'Alex' for Alexander)",
       setup="recommended"),
-    F("identity.pronouns", 1, "string", "Pronouns",
-      "Which pronouns should forms list, if any? (e.g. he/him, she/her, they/them, or 'decline')",
-      sensitive=True),
+    F("identity.pronouns", 1, "enum", "Pronouns",
+      "Optional: which pronouns should forms show? (he/him, she/her, they/them, he/they, she/they, xe/xem, "
+      "ze/hir, any pronouns, use my name, self-describe, or decline)",
+      choices="pronouns", multi=True, sensitive=True, setup="recommended"),
     F("identity.date_of_birth", 1, "date", "Date of birth",
-      "Date of birth (YYYY-MM-DD). Only some non-US forms ask; skip if you prefer.", sensitive=True),
+      "Date of birth (any format). Only some non-US forms ask; skip if you prefer.", sensitive=True),
 
     # ---------------------------------------------------------------- contact (tier 1)
     F("contact.email", 1, "email", "Email", "Which email address should employers use?", setup="required"),
@@ -94,7 +95,7 @@ FACTS = [
       "Will you need visa sponsorship at ANY point in the future (e.g. H-1B after OPT ends)?",
       setup="required"),
     F("work_auth.permit_expiry", 2, "date", "Work permit expiry",
-      "When does your current work authorization end (YYYY-MM-DD)? Skip if it does not expire.",
+      "When does your current work authorization end (e.g. June 2028)? Skip if it does not expire.",
       review_days=365),
     F("work_auth.security_clearance", 1, "enum", "Security clearance",
       "Do you hold an active security clearance? (none, confidential, secret, top secret, TS/SCI)",
@@ -178,7 +179,7 @@ FACTS = [
 
     # ---------------------------------------------------------------- availability (tier 2)
     F("availability.earliest_start", 2, "date", "Earliest start date",
-      "Earliest date you could start a new job (YYYY-MM-DD)", setup="recommended", review_days=60),
+      "Earliest date you could start a new job (e.g. June 1, 2027 or 6/2027)", setup="recommended", review_days=60),
     F("availability.notice_period", 2, "string", "Notice period",
       "How much notice do you need to give? (e.g. 'Immediately', '2 weeks')", setup="recommended",
       review_days=90),

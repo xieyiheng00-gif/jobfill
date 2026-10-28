@@ -55,7 +55,8 @@ Read every source document. Build ONE patch file at `data/patches/<YYYY-MM-DD>-<
 ```
 
 - Valid fact keys, labels and enum choices: `python -m jobfill fact list`. Record fields:
-  `python -m jobfill record kinds`. Dates are `YYYY-MM` (or `YYYY-MM-DD`).
+  `python -m jobfill record kinds`. Copy dates as the document writes them ("Sep 2025", "9/2025",
+  "2025/9", "Present"); jobfill stores them as `YYYY-MM` and writes each form's own format.
 - Record only what the documents state. Metrics only when written down; never estimate.
 - Projects: descriptive name, the candidate's real role and `ownership` (sole/lead/contributor),
   `is_coursework` for class projects, a factual one-line `summary`.
@@ -90,7 +91,8 @@ Use the section headings below, include only sections that have questions, one l
 - each conflict with a stored value: "stored X, document says Y - keep or replace?"
 - one item: "Anything above wrong or to leave out? (reply 'all ok' if not)"
 
-**B. Identity & contact** - missing name, preferred name, email, phone, address, LinkedIn/GitHub.
+**B. Identity & contact** - missing name, preferred name, pronouns (optional; "decline" is fine), email,
+phone, address, LinkedIn/GitHub.
 Where the documents suggest a value, show it in brackets so "ok" confirms it.
 
 **C. Work authorization** - primary job-search country, countries they can work in, citizenship,

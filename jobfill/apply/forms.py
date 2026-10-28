@@ -81,11 +81,13 @@ def to_resolver_field(f: dict) -> dict:
     out = {"id": f["id"], "label": f["label"], "type": rtype, "required": bool(f.get("required"))}
     if f.get("options") and kind != "input":
         out["options"] = f["options"]
-    for k in ("max_chars", "section", "index"):
-        if f.get(k) is not None:
+    for k in ("max_chars", "section", "index", "placeholder"):
+        if f.get(k) not in (None, ""):
             out[k] = f[k]
     if rtype == "date":
-        out["format"] = "YYYY-MM-DD"
+        out["format"] = "YYYY-MM-DD"       # <input type=date> always takes ISO
+    elif f.get("type") == "month":
+        out["format"] = "YYYY-MM"          # <input type=month>
     return out
 
 

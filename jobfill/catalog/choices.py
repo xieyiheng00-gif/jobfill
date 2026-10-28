@@ -98,6 +98,27 @@ CHOICE_SETS: dict[str, dict] = {
             "decline": DECLINE,
         },
     },
+    "pronouns": {
+        "values": {
+            "he_him": ["he him", "he him his", "he"],
+            "she_her": ["she her", "she her hers", "she"],
+            "they_them": ["they them", "they them theirs", "they"],
+            "he_they": ["he they", "he they them"],
+            "she_they": ["she they", "she they them"],
+            "xe_xem": ["xe xem", "xe xem xyr", "xe"],
+            "ze_hir": ["ze hir", "ze zir", "ze hir hirs", "ze zir zirs", "ze"],
+            "any": ["any pronouns", "all pronouns", "any all"],
+            "use_name": ["use my name", "use my name only", "name only", "no pronouns", "just my name"],
+            "self_describe": ["self describe", "prefer to self describe", "i prefer to self describe", "other",
+                              "not listed", "another"],
+            "decline": DECLINE,
+        },
+        # How the value reads in a free-text box.
+        "labels": {"he_him": "he/him", "she_her": "she/her", "they_them": "they/them", "he_they": "he/they",
+                   "she_they": "she/they", "xe_xem": "xe/xem", "ze_hir": "ze/hir", "any": "any pronouns",
+                   "use_name": "please use my name", "self_describe": "self-describe",
+                   "decline": "prefer not to say"},
+    },
     "sexual_orientation": {
         "values": {
             "heterosexual": ["heterosexual", "straight"],

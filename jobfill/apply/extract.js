@@ -116,6 +116,27 @@
     }
     return null;
   };
+  // Split dates: controls labelled only "Month" / "Year" / "Day" (or MM / YYYY) take the heading of
+  // the block that holds just those controls, e.g. "Expected graduation date Month".
+  const PART = /^(month|year|day|mm|yyyy|yy|dd)\s*[*✱]?$/i;
+  const partHeading = (el) => {
+    let node = el;
+    for (let depth = 0; depth < 5; depth++) {
+      node = node.parentElement;
+      if (!node || node === document.body) break;
+      const ctrls = Array.from(node.querySelectorAll(CONTROL));
+      if (ctrls.length > 3 || ctrls.some((c) => !PART.test(directLabel(c) || c.getAttribute("placeholder") || ""))) break;
+      const heads = Array.from(node.querySelectorAll(LABELISH)).filter((c) =>
+        !c.querySelector(CONTROL) && textOf(c) && !PART.test(textOf(c)) && !ctrls.some((o) => forLabel(o) === c) &&
+        (c.compareDocumentPosition(ctrls[0]) & Node.DOCUMENT_POSITION_FOLLOWING));
+      if (heads.length) {
+        let best = heads[heads.length - 1];
+        while (best.parentElement && heads.includes(best.parentElement)) best = best.parentElement;
+        return textOf(best);
+      }
+    }
+    return "";
+  };
   const required = (el, label) =>
     el.required || el.getAttribute("aria-required") === "true" || /[*✱]|\(required\)/i.test(label);
   // React-Select shows the chosen option in a sibling element, not in the input itself.
@@ -189,6 +210,10 @@
     }
     if (!label) label = clean(el.getAttribute("placeholder")) || name || el.id;
     if (!label) continue;   // nothing a person could read either (e.g. Ashby's "autofill from resume" drop zone)
+    if (PART.test(label)) {
+      const head = partHeading(el);
+      if (head) label = `${head} ${label}`;
+    }
     const f = { id: tag(el), kind, type: kind === "input" ? type : kind, label, name, html_id: el.id || "",
                 required: required(el, label), section: sectionOf(el), placeholder: clean(el.getAttribute("placeholder")) };
     if (el.maxLength > 0 && el.maxLength < 100000) f.max_chars = el.maxLength;

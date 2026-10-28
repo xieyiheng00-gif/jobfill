@@ -4,7 +4,9 @@ Each kind names the fields an entry may have and the ``key`` fields that
 identify "the same entry" when an import patch is merged (so re-importing an
 updated resume updates entries instead of duplicating them).
 
-Dates are ISO strings: ``YYYY-MM-DD`` or ``YYYY-MM``. ``end_date`` empty plus
+Dates may arrive in any common form (``Sep 2025``, ``9/2025``, ``2025/9``, ``09/01/2025``) and are
+stored as ``YYYY``, ``YYYY-MM`` or ``YYYY-MM-DD``; an ``end_date`` of "Present" sets ``current`` /
+``expected`` instead. Forms get each date in the format and pieces they ask for. ``end_date`` empty plus
 ``current: true`` (experience) or ``expected: true`` (education) marks
 something ongoing. Index 0 of every kind is the most recent entry.
 """
@@ -22,8 +24,10 @@ RECORD_KINDS: dict[str, dict] = {
             "start_date": "YYYY-MM",
             "end_date": "YYYY-MM (graduation or expected graduation)",
             "expected": "true while the degree is still in progress",
-            "gpa": "GPA as a number or string",
-            "gpa_scale": "e.g. 4.0",
+            "gpa": "GPA as written, e.g. 3.8 or 9.1/10",
+            "gpa_scale": "e.g. 4.0 (assumed 4.0 when the GPA fits)",
+            "gpa_4": "Only if the school uses another scale: the 4.0-scale GPA you want forms to show "
+                     "(asked once; jobfill never converts scales itself)",
             "location": "City, State/Country",
             "honors": "Honors / distinctions",
             "coursework": "List of relevant courses",

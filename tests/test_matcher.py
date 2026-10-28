@@ -107,6 +107,10 @@ CASES = [
     ("Have you ever interviewed at Anthropic before?", "previously_interviewed", "select", "Anthropic"),
     ("Are you open to working in-person in one of our offices 25% of the time?", "onsite_ok", "select", None),
     ("Language Skill(s) (Check all that apply)", "languages_list", "checkbox", None),
+    ("Is your cumulative GPA 3.0 or higher?", "gpa_threshold", "radio", None),
+    ("Do you have a 3.5 GPA or above?", "gpa_threshold", "radio", None),
+    ("Undergraduate GPA (out of 4.0)", "undergrad_gpa", None, None),
+    ("Please select your GPA range", "edu_gpa", "select", None),
 ]
 
 # Labels that must NOT be answered by a static rule.

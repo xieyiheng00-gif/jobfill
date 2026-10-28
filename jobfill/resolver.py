@@ -26,8 +26,9 @@ from datetime import date
 from .catalog import RECORD_KINDS, choice_set
 from .derive import RULES, Answer, Ctx, NeedFact, NeedUser, _degree_level, is_current, lacks_skill
 from .matcher import Matcher
-from .text import (choose_enum_option, choose_range_option, choose_text_option, format_date, normalize,
-                   option_label)
+from .store import DATE_FIELDS
+from .text import (choose_date_option, choose_enum_option, choose_range_option, choose_text_option,
+                   classify_option, date_part, detect_date_format, format_date, normalize, option_label, parse_date)
 
 LONG_TEXT_CHARS = 200
 CATCH_ALL = {"open_ended_custom", "bh_generic"}
@@ -54,8 +55,18 @@ THEME_WORDS = {
 }
 
 
-def _human(canon: str) -> str:
-    return canon.replace("_", " ").capitalize()
+def _human(canon: str, choices: str | None = None) -> str:
+    """How a stored choice reads in text: the choice set's label ("they/them"), else 'Not veteran'."""
+    label = choice_set(choices)["_labels"].get(canon) if choices and choices != "bool" else None
+    return label or canon.replace("_", " ").capitalize()
+
+
+def _canonical(value: str, cs: dict) -> str:
+    """A stored value in its choice set's terms; free text from older data ("they/them") is classified."""
+    if value in cs["_values"]:
+        return value
+    scores = classify_option(normalize(value), cs)
+    return max(scores, key=scores.get) if scores else value
 
 
 class Resolver:
@@ -133,7 +144,8 @@ class Resolver:
                     raise NeedFact(key)
                 d = self.defs[key]
                 ans = Answer(value, choices=d["choices"], source=f"fact:{key}",
-                             kind="country" if key in COUNTRY_FACTS else "state" if key in STATE_FACTS else None)
+                             kind="country" if key in COUNTRY_FACTS else "state" if key in STATE_FACTS
+                             else "date" if d["type"] == "date" else None)
             elif "template" in spec:
                 facts = {}
                 for key in re.findall(r"\{([a-z_]+\.[a-z0-9_]+)\}", spec["template"]):
@@ -179,7 +191,8 @@ class Resolver:
         if fname == "degree_level" or (fname == "degree" and field.get("options")):
             # Dropdowns list levels ("Master's Degree"), not diploma titles ("Master of Science").
             return Answer(r.get("degree_level") or _degree_level(r), choices="degree_level", source=src)
-        return Answer(r.get(fname), choices=q.get("choices"), source=src)
+        return Answer(r.get(fname), choices=q.get("choices"), source=src,
+                      kind="date" if fname in DATE_FIELDS else None)
 
     def _ai(self, q: dict, ai: dict, field: dict) -> dict:
         # Catch-all questions cover many different prompts: reuse only an answer to the same wording.
@@ -231,12 +244,14 @@ class Resolver:
             return {"status": "skipped", "note": "no stored value", "source": ans.source}
         choices = ans.choices or q.get("choices")
         out = {"status": "filled", "raw": value, "source": ans.source}
+        if ans.kind == "date" and parse_date(value) is not None:
+            return self._render_date(ans, field, out)
 
         if options:
             picked = self._pick(value, options, choices, ans.kind, ftype)
             if picked is None or picked == []:
                 vals = value if isinstance(value, list) else [value]
-                shown = ", ".join(_human(v) if choices and choices != "bool" and isinstance(v, str) else str(v)
+                shown = ", ".join(_human(v, choices) if choices and choices != "bool" and isinstance(v, str) else str(v)
                                   for v in vals)
                 return {"status": "needs_user", "raw": value, "source": ans.source,
                         "ask": f"Your stored answer ({shown}) is not one of the options for '{field.get('label')}'. "
@@ -247,18 +262,54 @@ class Resolver:
         if isinstance(value, bool):
             out["value"] = value if ftype == "checkbox" else ("Yes" if value else "No")
         elif choices and choices != "bool" and isinstance(value, (str, list)):
+            cs = choice_set(choices)
             vals = value if isinstance(value, list) else [value]
-            out["value"] = ", ".join(_human(v) for v in vals)
+            out["value"] = ", ".join(_human(_canonical(str(v), cs), choices) for v in vals)
         elif isinstance(value, list):
             out["value"] = ", ".join(str(v) for v in value)
         elif isinstance(value, float) and value.is_integer():
             out["value"] = str(int(value))
-        elif ftype == "date" or field.get("format"):
-            out["value"] = format_date(value, field.get("format")) if field.get("format") else str(value)
         else:
             out["value"] = str(value)
         if field.get("max_chars") and isinstance(out["value"], str) and len(out["value"]) > field["max_chars"]:
             out["warning"] = f"{len(out['value'])} chars exceeds limit {field['max_chars']}; trim before submitting"
+        return out
+
+    def _render_date(self, ans: Answer, field: dict, out: dict) -> dict:
+        """Write a stored date the way this field wants it: one piece, a dropdown option, or a format."""
+        parts = parse_date(ans.value)
+        label = field.get("label", "")
+        options = field.get("options") or []
+        part = date_part(label, options)
+        if options:
+            picked = choose_date_option(parts, part, options)
+            if picked is None:
+                return {"status": "needs_user", "raw": ans.value, "source": ans.source,
+                        "ask": f"Your stored date ({ans.value}) matches none of the options for '{label}'. "
+                               f"Which option should be selected? {[option_label(o) for o in options]}"}
+            out["value"] = option_label(picked)
+            return out
+        ftype = (field.get("type") or "text").lower()
+        placeholder = field.get("placeholder") or ""
+        if part == "month":
+            fmt = "M" if ftype == "number" else ("MMMM" if re.search(r"[a-z]{3}", placeholder, re.I) else "MM")
+        elif part == "year":
+            fmt = "YY" if (field.get("max_chars") or 4) <= 2 else "YYYY"
+        elif part == "day":
+            fmt = "D" if ftype == "number" else "DD"
+        else:
+            precision = "day" if parts[2] else "month" if parts[1] else "year"
+            # Plain-English questions ("When can you start?") get a readable date; date fields get MM/YYYY style.
+            spoken = re.match(r"^(when|what|how)\b", normalize(label)) and ftype in ("text", "textarea")
+            fmt = (field.get("format") or {"date": "YYYY-MM-DD", "month": "YYYY-MM"}.get(ftype)
+                   or detect_date_format(label, placeholder) or ans.fmt
+                   or {"year": "YYYY", "month": "MMMM YYYY" if spoken else "MM/YYYY",
+                       "day": "MMMM D, YYYY" if spoken else "MM/DD/YYYY"}[precision])
+        text = format_date(ans.value, fmt)
+        if text is None:
+            return {"status": "needs_user", "raw": ans.value, "source": ans.source,
+                    "ask": f"'{label}' needs a month, but only the year ({ans.value}) is stored. What month?"}
+        out["value"] = text
         return out
 
     def _pick(self, value, options, choices, kind, ftype):
@@ -266,7 +317,7 @@ class Resolver:
         if choices:
             cs = choice_set(choices)
             vals = value if isinstance(value, list) else [value]
-            vals = [("true" if v else "false") if isinstance(v, bool) else str(v) for v in vals]
+            vals = [("true" if v else "false") if isinstance(v, bool) else _canonical(str(v), cs) for v in vals]
             picked = [p for v in vals if (p := choose_enum_option(v, options, cs)) is not None]
             return picked if multi else (picked[0] if picked else None)
         if isinstance(value, (int, float)) and not isinstance(value, bool):

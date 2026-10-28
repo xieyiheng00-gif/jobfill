@@ -191,6 +191,31 @@ def _migrate(conn: sqlite3.Connection) -> None:
                 conn.execute(f"ALTER TABLE answers ADD COLUMN {column} {ddl}")
 
 
+def _canonicalize_choice_facts(conn: sqlite3.Connection, ts: str) -> None:
+    """A fact that became a choice (pronouns used to be free text) keeps its meaning: 'she/her' -> she_her."""
+    from .catalog import choice_set
+    from .text import classify_option
+    rows = conn.execute("SELECT f.key, f.value, d.choices, d.multi FROM facts f JOIN fact_defs d ON d.key = f.key "
+                        "WHERE d.type = 'enum' AND d.choices IS NOT NULL").fetchall()
+    for r in rows:
+        cs = choice_set(r["choices"])
+        value = json.loads(r["value"])
+        vals = value if isinstance(value, list) else [value]
+        if all(str(v) in cs["_values"] for v in vals):
+            continue
+        mapped = []
+        for v in vals:
+            scores = classify_option(normalize(str(v)), cs)
+            if not scores:
+                break   # cannot tell: leave it for the candidate to fix
+            mapped.append(max(scores, key=scores.get))
+        else:
+            new = json.dumps(mapped if r["multi"] else mapped[0])
+            conn.execute("UPDATE facts SET value=? WHERE key=?", (new, r["key"]))
+            conn.execute("INSERT INTO fact_history (key, old_value, new_value, source, changed_at) "
+                         "VALUES (?,?,?, 'migration', ?)", (r["key"], r["value"], new, ts))
+
+
 def _catalog_fingerprint() -> str:
     digest = hashlib.sha1(json.dumps([FACTS, QUESTIONS], sort_keys=True, default=str).encode()).hexdigest()
     return f"{SCHEMA_VERSION}:{digest[:16]}"
@@ -245,6 +270,7 @@ def seed(conn: sqlite3.Connection) -> dict:
                        VALUES (?,?,?,?,?, 'builtin', ?)
                        ON CONFLICT(question_id, normalized, is_pattern) DO UPDATE SET priority=excluded.priority""",
                     (q["id"], text, norm, is_pattern, priority, ts))
+        _canonicalize_choice_facts(conn, ts)
         conn.execute("INSERT OR REPLACE INTO meta (key, value) VALUES ('catalog', ?)", (_catalog_fingerprint(),))
         conn.execute("INSERT OR REPLACE INTO meta (key, value) VALUES ('schema_version', ?)", (str(SCHEMA_VERSION),))
     return {"facts": len(FACTS), "questions": len(QUESTIONS)}

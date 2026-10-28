@@ -1,0 +1,28 @@
+<!doctype html>
+<html><head><meta charset="utf-8"><title>Dates - Acme</title></head>
+<body>
+<!-- Split and formatted date fields as seen across ATSs: month/year pairs under one heading,
+     numeric month dropdowns, placeholders that state the format, native date inputs. -->
+<form id="application-form">
+  <div class="education--container">
+    <fieldset><legend>Start date</legend>
+      <label for="sm">Month</label>
+      <select id="sm"><option value="">Month</option><option>January</option><option>February</option>
+        <option>March</option><option>April</option><option>May</option><option>June</option><option>July</option>
+        <option>August</option><option>September</option><option>October</option><option>November</option>
+        <option>December</option></select>
+      <label for="sy">Year</label><input id="sy" type="text" maxlength="4">
+    </fieldset>
+    <fieldset><legend>Expected graduation date</legend>
+      <select id="gm" aria-label="Month"><option value="">MM</option><option>01</option><option>02</option>
+        <option>03</option><option>04</option><option>05</option><option>06</option><option>07</option><option>08</option>
+        <option>09</option><option>10</option><option>11</option><option>12</option></select>
+      <select id="gy" aria-label="Year"><option value="">YYYY</option><option>2025</option><option>2026</option>
+        <option>2027</option><option>2028</option></select>
+    </fieldset>
+  </div>
+  <div><label for="avail">Earliest start date</label><input id="avail" type="text" placeholder="mm/dd/yyyy"></div>
+  <div><label for="avail2">Start availability (Mon YYYY)</label><input id="avail2" type="text"></div>
+  <div><label for="sig">Date</label><input id="sig" type="date"></div>
+</form>
+</body></html>

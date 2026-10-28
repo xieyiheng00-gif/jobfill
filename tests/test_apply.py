@@ -181,7 +181,7 @@ class TestFiller(unittest.TestCase):
         # Fieldset <label> is the question text, not the "Input gender" helper paragraph.
         self.assertEqual(by_label["Gender"]["status"], "needs_user")      # sample profile: non-binary, no such option
         self.assertEqual(by_label["Veteran Status"]["value"], "I am not a protected veteran")
-        self.assertEqual(page.input_value("#question_3"), "2027-06-01")
+        self.assertEqual(page.input_value("#question_3"), "June 1, 2027")   # plain-English question, readable date
 
     def test_icims_email_gate_respects_consent_and_dry_run(self):
         store = fresh_store(with_profile=True, owner=self)

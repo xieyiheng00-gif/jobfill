@@ -5,7 +5,7 @@ from __future__ import annotations
 import re
 from dataclasses import dataclass, field
 
-from .text import normalize, similarity
+from .text import normalize, similarity, strip_date_format
 
 ACCEPT = 0.86      # fuzzy score needed to answer without asking anyone
 UNCERTAIN = 0.62   # below this the label is treated as unknown
@@ -30,9 +30,21 @@ class Match:
         return self.status in ("exact", "pattern", "fuzzy")
 
 
+DATE_PART_WORDS = re.compile(r"\b(month|year|day|mm|yyyy|dd)\b", re.I)
+DATE_RULES = {"graduation_date", "today"}
+
+
+def is_date_question(q: dict, date_facts: set[str]) -> bool:
+    from .store import DATE_FIELDS
+    spec = q["answer"]
+    return (spec.get("fact") in date_facts or spec.get("record") is not None and spec.get("field") in DATE_FIELDS
+            or spec.get("derive") in DATE_RULES)
+
+
 class Matcher:
-    def __init__(self, questions: dict[str, dict], aliases: list[dict]):
+    def __init__(self, questions: dict[str, dict], aliases: list[dict], date_facts: set[str] = frozenset()):
         self.questions = questions
+        self.date_questions = {qid for qid, q in questions.items() if is_date_question(q, date_facts)}
         self.exact: dict[str, list[str]] = {}
         self.fuzzy: list[tuple[str, str]] = []
         self.patterns: list[tuple[int, re.Pattern, str]] = []
@@ -48,7 +60,8 @@ class Matcher:
 
     @classmethod
     def from_store(cls, store) -> "Matcher":
-        return cls(store.questions(), store.aliases())
+        date_facts = {k for k, d in store.fact_defs().items() if d["type"] == "date"}
+        return cls(store.questions(), store.aliases(), date_facts)
 
     # ------------------------------------------------------------------ filters
     def _kind_ok(self, q: dict, field_type: str | None) -> bool:
@@ -78,6 +91,24 @@ class Matcher:
     # ------------------------------------------------------------------ main entry
     def match(self, label: str, *, section: str | None = None, field_type: str | None = None,
               company: str | None = None, role: str | None = None) -> Match:
+        m = self._match(label, section=section, field_type=field_type, company=company, role=role)
+        if m.matched:
+            return m
+        # Date fields: retry without a format hint ("Start (MM/YYYY)") and without the part word of a
+        # split date ("Expected graduation date - Month"). Only a date question may win the retry; the
+        # resolver then writes just that part, in that format.
+        no_format = strip_date_format(label)
+        for core in dict.fromkeys((no_format, DATE_PART_WORDS.sub(" ", no_format))):
+            if core == label or not normalize(core):
+                continue
+            retry = self._match(core, section=section, field_type=field_type, company=company, role=role)
+            if retry.matched and retry.question_id in self.date_questions:
+                retry.normalized = m.normalized
+                return retry
+        return m
+
+    def _match(self, label: str, *, section: str | None = None, field_type: str | None = None,
+               company: str | None = None, role: str | None = None) -> Match:
         norm = normalize(label, company=company, role=role)
         if not norm:
             return Match("none", normalized=norm)
