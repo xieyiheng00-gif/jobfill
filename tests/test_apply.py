@@ -216,6 +216,45 @@ class TestFiller(unittest.TestCase):
         self.assertTrue(page.is_checked("#accept_gdpr"))
         self.assertEqual(page.evaluate("() => document.body.dataset.submitted"), "jordan.rivera@example.com")
 
+    def test_two_failures_hand_the_field_to_the_agent(self):
+        from unittest import mock
+        from jobfill import report
+        from jobfill.apply import runner
+        store = fresh_store(with_profile=True, owner=self)
+        app = store.start_application("Globex", "Engineer")
+        page = self.browser.new_page()
+        self.addCleanup(page.close)
+        page.goto((FIXTURES / "lever_like.html").as_uri())
+        lever = adapters.get("lever")
+        tried, real_fill = [], runner.fill
+
+        def phone_widget_breaks(frame, f, value, **kw):   # a widget jobfill cannot operate
+            if f["label"] == "Phone":
+                tried.append(value)
+                return False, "widget not supported"
+            return real_fill(frame, f, value, **kw)
+
+        def run(overwrite=False):
+            return runner.summarize(runner.fill_frame(lever.frame(page), store, app, lever, overwrite=overwrite,
+                                                      files=False), app)
+
+        with mock.patch.object(runner, "fill", phone_widget_breaks):
+            first = run(overwrite=True)
+            self.assertEqual([f["label"] for f in first["fill_failed"]], ["Phone"])   # once: retried next run
+            self.assertNotIn("handoff", first)
+            second = run()
+            self.assertEqual([(h["label"], h["attempts"]) for h in second["handoff"]], [("Phone", 2)])
+            self.assertEqual(second["counts"]["handoff"], 1)
+            third = run()
+            self.assertEqual(len(tried), 2)                       # not tried a third time
+            self.assertEqual(third["handoff"][0]["why"], "not tried: failed 2 times with this value")
+            rec = {f["question"]: f for f in report.build(store, app)["fields"]}
+            self.assertEqual(rec["Phone"]["answered_by"], "open")
+            # A corrected value is a new attempt.
+            store.set_fact("contact.phone", "608-555-7777")
+            run()
+            self.assertEqual(tried[-1], "608-555-7777")
+
     def test_submit_button_is_found_but_never_clicked_by_fill(self):
         page, _, _ = self.run_fixture("lever_like.html", "lever", "Globex")
         frame = adapters.get("lever").frame(page)

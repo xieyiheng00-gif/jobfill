@@ -17,8 +17,22 @@ OPEN = {"needs_ai": "needs an AI-written answer", "needs_user": "needs your answ
         "uncertain": "new question (unclassified)", "unmatched": "new question (unclassified)"}
 
 
+def _not_entered(row: dict) -> bool:
+    return str(row.get("fill") or "").startswith(("failed", "not tried"))
+
+
+def open_reason(row: dict) -> str | None:
+    if _not_entered(row):
+        tries = row.get("attempts") or 0
+        return (f"jobfill could not enter it ({tries} tries); the agent or you set it" if tries >= 2
+                else "jobfill could not enter it yet")
+    return OPEN.get(row["status"])
+
+
 def answered_by(row: dict) -> str:
     """profile | ai | you | blank | open"""
+    if row["status"] == "filled" and _not_entered(row):
+        return "open"
     if row["status"] == "filled":
         src = row.get("source") or ""
         if src.startswith(PYTHON_SOURCES):
@@ -44,7 +58,7 @@ def build(store, app_id: int) -> dict:
         fields.append({
             "n": i, "question": r["label"], "answer": r["value"], "answered_by": who, "source": r["source"],
             "question_id": r["question_id"], "tier": r["tier"], "status": r["status"],
-            "typed": _typed(r), **({"open_reason": OPEN.get(r["status"])} if who == "open" else {}),
+            "typed": _typed(r), **({"open_reason": open_reason(r)} if who == "open" else {}),
         })
     answered = counts["profile"] + counts["ai"] + counts["you"]
     return {

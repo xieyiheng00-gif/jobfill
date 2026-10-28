@@ -136,6 +136,8 @@ CREATE TABLE IF NOT EXISTS answers (
     fill            TEXT,                      -- ok | failed: ... | kept ... | NULL (entered by the agent or not typed)
     section         TEXT,
     idx             INTEGER,
+    attempts        INTEGER NOT NULL DEFAULT 0, -- consecutive failed fills of attempt_value
+    attempt_value   TEXT,                       -- JSON of the value those failures were for
     UNIQUE (application_id, field_key)
 );
 
@@ -199,7 +201,7 @@ def _migrate(conn: sqlite3.Connection) -> None:
     have = {r["name"] for r in conn.execute("PRAGMA table_info(answers)")}
     with conn:
         for column, ddl in (("status", "TEXT NOT NULL DEFAULT 'filled'"), ("fill", "TEXT"), ("section", "TEXT"),
-                            ("idx", "INTEGER")):
+                            ("idx", "INTEGER"), ("attempts", "INTEGER NOT NULL DEFAULT 0"), ("attempt_value", "TEXT")):
             if column not in have:
                 conn.execute(f"ALTER TABLE answers ADD COLUMN {column} {ddl}")
 

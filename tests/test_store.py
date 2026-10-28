@@ -110,7 +110,7 @@ class TestMigration(unittest.TestCase):
         conn = db.connect(path)
         self.addCleanup(conn.close)
         cols = {r["name"] for r in conn.execute("PRAGMA table_info(answers)")}
-        self.assertTrue({"status", "fill", "section", "idx"} <= cols)
+        self.assertTrue({"status", "fill", "section", "idx", "attempts", "attempt_value"} <= cols)
 
 
 class TestSeed(unittest.TestCase):

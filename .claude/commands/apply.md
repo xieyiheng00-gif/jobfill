@@ -50,9 +50,18 @@ The output includes `app_id`, company, role, and earlier applications to the sam
    - `needs_ai` - write each answer from its task and the shared `ai_context` exactly as in `/fill`
      step 4, save it to `data/answers/app<ID>_<question_id>.txt`, and record it:
      `python -m jobfill answer record --app <ID> --question <question_id> --label "<the question's label on the form>" --file data/answers/app<ID>_<question_id>.txt`
-   - `fill_failed` - usually a custom widget. Retry with
-     `python -m jobfill apply set --app <ID> --field <field> --value "<value>"` (`--json` for lists),
-     or ask the candidate to fix it in the window.
+   - `fill_failed` - failed once. The next `apply fill` tries it once more by itself (often a dropdown
+     that loaded slowly); nothing to do yet.
+   - `handoff` - failed twice with the same value, so plain Python stops trying it (retrying a
+     deterministic failure only wastes runs). You decide, using `value`, `options` and `why`:
+     - the value is right but phrased differently from the options: pick the matching option and enter
+       it with `python -m jobfill apply set --app <ID> --field <field> --value "<option>"` (`--json` for
+       lists);
+     - you cannot tell which option is right, or the value itself is in doubt: ask the candidate in the
+       batched question message;
+     - the widget is one jobfill cannot operate (`apply set` fails too): ask the candidate to set it in
+       the window.
+     A field whose value changes (a corrected fact, a new answer) gets two fresh tries.
 2. Run `python -m jobfill apply fill --app <ID>` again. Stored facts and recorded answers now fill
    the remaining fields; values already in the form are kept (`--overwrite` replaces them).
    One-off questions not worth learning: `apply set` with the answer.
@@ -61,7 +70,7 @@ The output includes `app_id`, company, role, and earlier applications to the sam
    page. Workday's own dropdown widgets are not read yet: anything left blank on a Workday page goes to
    the candidate to pick in the window.
 4. Review, in ONE message: every written answer (numbered, with character/word count), any
-   `fill_failed` you could not fix, and a reminder that the window shows the whole filled form.
+   `handoff` field still unresolved, and a reminder that the window shows the whole filled form.
    Ask them to check the window, then to say "submit" or list changes.
 5. Only after an explicit "submit" (or equivalent) from the candidate:
    `python -m jobfill apply submit --app <ID> --confirm`. A CAPTCHA (`blockers: ["captcha"]`) is for

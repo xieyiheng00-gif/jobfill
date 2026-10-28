@@ -14,6 +14,7 @@ from .detect import Detection, detect
 from .forms import extract, fill, is_empty, to_resolver_field
 
 MAX_PASSES = 4   # re-read the form after filling: answers can reveal follow-up questions
+MAX_FILL_ATTEMPTS = 2   # same field, same value: a second failure means retrying will not help
 
 
 class ApplyError(Exception):
@@ -122,6 +123,8 @@ def fill_frame(frame, store, app_id: int, adapter, *, overwrite: bool, files: bo
                     entry["fill"] = "skipped (--no-files)"
                 elif not overwrite and not is_empty(f):
                     entry["fill"] = "kept (already has a value)"
+                elif (tried := store.fill_attempts(app_id, _key(store, f), r["value"])) >= MAX_FILL_ATTEMPTS:
+                    entry["fill"] = f"not tried: failed {tried} times with this value"
                 else:
                     ok, note = fill(frame, f, r["value"], root=ROOT, after=adapter.after_fill,
                                     custom=adapter.custom_fill)
@@ -129,7 +132,7 @@ def fill_frame(frame, store, app_id: int, adapter, *, overwrite: bool, files: bo
                     if ok and f["kind"] == "file":
                         adapter.after_upload(frame)
                 if not dry_run:
-                    store.set_answer_fill(app_id, _key(store, f), entry["fill"])
+                    _note(store, app_id, f, entry, r["value"])
             report["fields"][r["id"]] = entry
         if dry_run:
             break   # nothing typed, so no follow-up questions can appear
@@ -139,7 +142,7 @@ def fill_frame(frame, store, app_id: int, adapter, *, overwrite: bool, files: bo
         if entry.get("fill") == "ok" and fid in final and is_empty(final[fid]) and entry["kind"] != "checkbox":
             entry["fill"] = "failed: value did not stick"
             if not dry_run:
-                store.set_answer_fill(app_id, _key(store, final[fid]), entry["fill"])
+                _note(store, app_id, final[fid], entry, entry.get("value"))
     if ai_context:
         report["ai_context"] = ai_context
     return report
@@ -149,15 +152,32 @@ def _key(store, f: dict) -> str:
     return store.answer_key(f["label"], f.get("section"), f.get("index"))
 
 
+def _note(store, app_id: int, f: dict, entry: dict, value) -> None:
+    """Record the fill result; after MAX_FILL_ATTEMPTS failures with the same value, hand the field off.
+
+    A deterministic failure (the option is not in the list, a widget jobfill cannot operate) will not go
+    away by retrying, so the agent decides instead: pick the right option, or ask the candidate.
+    """
+    attempts = store.note_fill(app_id, _key(store, f), entry["fill"], value)
+    if attempts >= MAX_FILL_ATTEMPTS:
+        entry.update(status="handoff", attempts=attempts, options=f.get("options") or None)
+
+
 def summarize(report: dict, app_id: int) -> dict:
     fields = report["fields"]
     pick = lambda status: [v | {"field": k} for k, v in fields.items() if v["status"] == status]
     out = {
         "app_id": app_id,
         "blockers": report.get("blockers", []),
-        "counts": {s: len(pick(s)) for s in ("filled", "needs_ai", "needs_user", "uncertain", "unmatched", "skipped")},
+        "counts": {s: len(pick(s)) for s in ("filled", "needs_ai", "needs_user", "uncertain", "unmatched", "skipped",
+                                             "handoff")},
+        # Failed once: the next `apply fill` tries once more.
         "fill_failed": [{"field": k, "label": v["label"], "value": v.get("value"), "why": v["fill"]}
-                        for k, v in fields.items() if str(v.get("fill", "")).startswith("failed")],
+                        for k, v in fields.items() if str(v.get("fill", "")).startswith("failed")
+                        and v["status"] != "handoff"],
+        # Failed twice with the same value: Python stops; the agent decides or asks the candidate.
+        "handoff": [{"field": v["field"], "label": v["label"], "value": v.get("value"), "options": v.get("options"),
+                     "why": v["fill"], "attempts": v.get("attempts")} for v in pick("handoff")],
         "needs_user": [{"field": v["field"], "label": v["label"], "ask": v.get("ask"), "fact": v.get("fact"),
                         "choices": v.get("choices"), "store": v.get("store"), "sensitive": v.get("sensitive")}
                        for v in pick("needs_user")],
@@ -223,6 +243,7 @@ def set_command(store, data_dir: Path, app_id: int, field_id: str, value, *, hea
     if ok:
         store.record_answer(app_id, _key(store, f), f["label"], value, source="user", status="filled", fill="ok",
                             section=f.get("section"), idx=f.get("index"))
+        store.note_fill(app_id, _key(store, f), "ok", value)   # clears any earlier failures
         results.write(store, data_dir, app_id)
     return {"field": field_id, "label": f["label"], "ok": ok, "note": note or None}
 

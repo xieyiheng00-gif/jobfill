@@ -590,15 +590,37 @@ class Store:
                 (app_id, field_key, question_id, label, json.dumps(value, ensure_ascii=False), source, tier, now(),
                  status, fill, section, idx))
 
-    def set_answer_fill(self, app_id: int, field_key: str, fill: str) -> None:
-        # A later pass that only *kept* the value does not hide that jobfill typed it earlier.
+    def fill_attempts(self, app_id: int, field_key: str, value) -> int:
+        """How many times in a row typing ``value`` into this field has failed (0 for a new value)."""
+        r = self.conn.execute("SELECT attempts, attempt_value FROM answers WHERE application_id=? AND field_key=?",
+                              (app_id, field_key)).fetchone()
+        return r["attempts"] if r and r["attempt_value"] == json.dumps(value, ensure_ascii=False) else 0
+
+    def note_fill(self, app_id: int, field_key: str, fill: str, value=None) -> int:
+        """Record what happened when jobfill typed ``value``; returns consecutive failures for that value.
+
+        A failure counts against the value it was for, so a corrected value starts again from zero. A
+        later pass that only *kept* the value does not hide that jobfill typed it earlier.
+        """
+        v = json.dumps(value, ensure_ascii=False)
+        attempts = self.fill_attempts(app_id, field_key, value)
         with self.conn:
-            self.conn.execute("UPDATE answers SET fill=? WHERE application_id=? AND field_key=? "
-                              "AND NOT (? LIKE 'kept%' AND fill = 'ok')", (fill, app_id, field_key, fill))
+            if fill.startswith("failed"):
+                attempts += 1
+                self.conn.execute("UPDATE answers SET fill=?, attempts=?, attempt_value=? WHERE application_id=? "
+                                  "AND field_key=?", (fill, attempts, v, app_id, field_key))
+            elif fill == "ok":
+                attempts = 0
+                self.conn.execute("UPDATE answers SET fill='ok', attempts=0, attempt_value=NULL WHERE application_id=? "
+                                  "AND field_key=?", (app_id, field_key))
+            else:
+                self.conn.execute("UPDATE answers SET fill=? WHERE application_id=? AND field_key=? "
+                                  "AND NOT (? LIKE 'kept%' AND fill = 'ok')", (fill, app_id, field_key, fill))
+        return attempts
 
     def answers(self, app_id: int) -> list[dict]:
         return [dict(r, value=json.loads(r["value"])) for r in self.conn.execute(
-            "SELECT field_key, question_id, label, value, source, tier, status, fill, section, idx, created_at "
+            "SELECT field_key, question_id, label, value, source, tier, status, fill, section, idx, attempts, created_at "
             "FROM answers WHERE application_id=? ORDER BY id", (app_id,))]
 
     def prior_answer(self, question_id: str, scope: str, app: dict | None, label: str | None = None) -> dict | None:
