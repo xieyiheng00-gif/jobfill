@@ -623,6 +623,14 @@ class Store:
             "SELECT field_key, question_id, label, value, source, tier, status, fill, section, idx, attempts, created_at "
             "FROM answers WHERE application_id=? ORDER BY id", (app_id,))]
 
+    def written_answers(self, exclude_app_id: int | None = None) -> list[dict]:
+        """Tier-3 answers written for applications (by the agent or the candidate), with each one's company."""
+        return [dict(r, value=json.loads(r["value"])) for r in self.conn.execute(
+            """SELECT a.application_id, a.question_id, a.value, p.company FROM answers a
+               JOIN applications p ON p.id = a.application_id
+               WHERE a.tier = 3 AND a.source IN ('ai', 'user') AND a.status = 'filled' AND a.application_id != ?""",
+            (exclude_app_id or 0,))]
+
     def prior_answer(self, question_id: str, scope: str, app: dict | None, label: str | None = None) -> dict | None:
         """Earlier tier-3 answer that may be reused under the question's scope rule.
 

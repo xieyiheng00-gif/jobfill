@@ -92,6 +92,16 @@ The filler never solves CAPTCHAs, never accepts terms without a standing consent
 `apply submit --confirm` runs only after the candidate says so (or they click Submit themselves).
 `apply fill --dry-run` previews what would be filled without typing.
 
+**You can work in the window too.** Before every fill, set, next or submit, jobfill reads which page
+of the application is showing (by the progress bar's current step, or by the page's questions):
+
+- Answers you typed or changed are kept: jobfill only ever replaces values it typed itself, records
+  yours as answered by you, and does not ask or write them again.
+- You clicked Next yourself: jobfill continues on that page and does not click Next again.
+- You clicked Back to check an earlier page: jobfill pauses (no typing, clicking or submitting) until
+  you return to the furthest page or move on. `apply watch` tells the agent when that happens; it
+  fills an earlier page only if you ask (`--here`).
+
 ### Accounts and login (Workday, company portals)
 
 Sites that need an account are handled by `python -m jobfill login --app <ID>`, which **you run in your
@@ -167,6 +177,17 @@ Each result has a `status`: `filled` (use `value`), `needs_ai` (agent writes it 
 the shared `ai_context`), `needs_user` (ask once, store with the given command), `uncertain`
 (agent picks one of `candidates`), `unmatched` (new question, queued for `/learn`), `skipped`.
 
+### Written answers (tier 3)
+
+Open questions ("Why us?", "Tell us about yourself", "What did you learn recently?", "Tell us about
+a time...", "How do you use AI in your work?", first 90 days, values, gaps) are recognized like any
+other question, then written per application. Each `needs_ai` task names a **playbook**, the
+technique recruiters expect for that question type (STAR for behavioral, hook -> link -> contribution
+for "why us", present -> past -> future for "about you", gap -> method -> proof for learning...).
+`ai_context.writing` carries the shared style rules, only the playbooks used on that form, and a
+checklist. Before recording, `answer check` tests the draft in plain Python: limits, placeholders,
+another company's name, a near-copy of an answer written for another company, cliches, markdown.
+
 ## How the database keeps up with new questions
 
 1. An unknown label is saved in `pending_questions` with its options and the company.
@@ -189,8 +210,8 @@ export [--format json|md] [--tier] [--out]
 match "<label>" [--section] [--type] [--company]        (debug the matcher)
 resolve <fields.json> [--app ID] [--no-log] [--compact]
 context --question <id> [--app ID] [--max-chars N]      (AI context for one tier-3 question)
-answer record|list                                       (application answer log)
-apply detect|start <url> | apply fill|set|next|submit|status --app ID | apply close
+answer check|record|list                                 (check a written answer, then log it)
+apply detect|start <url> | apply fill|set|next|submit|watch|status --app ID | apply close
 login --app ID  (you run it) | account email|list|password|rotate|forget | mail test
 app start|list|show|update
 pending | learn <pending_id> --alias-of|--new-question|--ignore

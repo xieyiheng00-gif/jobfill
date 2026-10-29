@@ -1,0 +1,53 @@
+<!doctype html>
+<html><head><meta charset="utf-8"><title>Apply - Acme Robotics Careers</title></head>
+<body>
+<!-- A local stand-in for a Workday-style multi-page application: one address, steps shown one at a time,
+     the current step marked in the progress bar (progressBarActiveStep), Back and Save and Continue at the
+     bottom, Submit on the last step, then a confirmation page without questions. Values entered on a
+     step survive going Back and forward again, as on the real sites. -->
+<ol id="progress">
+  <li data-step="0">My Information</li><li data-step="1">Application Questions</li><li data-step="2">Review</li>
+</ol>
+<section data-step="0">
+  <label for="first">First Name</label><input id="first" type="text">
+  <label for="last">Last Name</label><input id="last" type="text">
+  <label for="email">Email</label><input id="email" type="email">
+  <label for="phone">Phone Number</label><input id="phone" type="tel">
+</section>
+<section data-step="1">
+  <label for="auth">Are you legally authorized to work in the United States?</label>
+  <select id="auth"><option value="">Select One</option><option>Yes</option><option>No</option></select>
+  <label for="sponsor">Will you now or in the future require sponsorship for employment visa status?</label>
+  <select id="sponsor"><option value="">Select One</option><option>Yes</option><option>No</option></select>
+  <label for="why">Why do you want to work at Acme Robotics?</label><textarea id="why"></textarea>
+</section>
+<section data-step="2">
+  <label for="preferred">Preferred Name</label><input id="preferred" type="text">
+  <label for="linkedin">LinkedIn Profile</label><input id="linkedin" type="url">
+</section>
+<section data-step="3"><h2>Thank you for applying!</h2><p>We have received your application.</p></section>
+<div id="nav">
+  <button type="button" data-automation-id="bottom-navigation-previous-button">Back</button>
+  <button type="button" data-automation-id="bottom-navigation-next-button">Save and Continue</button>
+</div>
+<script>
+let step = 0;
+const back = document.querySelector("[data-automation-id=bottom-navigation-previous-button]");
+const next = document.querySelector("[data-automation-id=bottom-navigation-next-button]");
+function show() {
+  document.querySelectorAll("section").forEach((s) => { s.hidden = Number(s.dataset.step) !== step; });
+  document.querySelectorAll("#progress li").forEach((li) => {
+    const active = Number(li.dataset.step) === step;
+    li.setAttribute("data-automation-id", active ? "progressBarActiveStep" : "progressBarInactiveStep");
+  });
+  document.getElementById("progress").hidden = step === 3;
+  document.getElementById("nav").hidden = step === 3;
+  back.hidden = step === 0;
+  next.textContent = step === 2 ? "Submit" : "Save and Continue";
+}
+back.addEventListener("click", () => { step -= 1; show(); });
+next.addEventListener("click", () => { step += 1; show(); });
+window.go = (to) => setTimeout(() => (to === "back" ? back : next).click(), 600);
+show();
+</script>
+</body></html>

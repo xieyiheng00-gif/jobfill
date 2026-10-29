@@ -111,6 +111,33 @@ CASES = [
     ("Do you have a 3.5 GPA or above?", "gpa_threshold", "radio", None),
     ("Undergraduate GPA (out of 4.0)", "undergrad_gpa", None, None),
     ("Please select your GPA range", "edu_gpa", "select", None),
+    # Open questions common on Greenhouse / Lever / Workday portals (written per application).
+    ("What is the best technique you learned recently?", "learned_recently", ESSAY, None),
+    ("What's something you've taught yourself in the last six months?", "learned_recently", ESSAY, None),
+    ("Explain a complex technical concept to someone non-technical.", "explain_concept", ESSAY, None),
+    ("What's your favorite programming language, and why?", "tech_opinion", ESSAY, None),
+    ("What's your favorite open-source project and why?", "tech_opinion", ESSAY, None),
+    ("How do you use AI tools such as ChatGPT or Copilot in your day-to-day work?", "ai_usage", ESSAY, None),
+    ("What AI tools do you use?", "ai_usage", ESSAY, None),
+    ("What motivates you?", "motivation_drive", ESSAY, None),
+    ("How do you approach a complex problem you've never seen before?", "problem_approach", ESSAY, None),
+    ("Please describe your experience with distributed systems.", "skill_experience", ESSAY, None),
+    ("Tell us about your hands-on experience with Kubernetes", "skill_experience", ESSAY, None),
+    ("Describe your prior research experience.", "research_experience", ESSAY, None),
+    ("What was your favorite class in college and why?", "favorite_course", ESSAY, None),
+    ("Why are you looking to leave your current role?", "leaving_reason", ESSAY, None),
+    ("Please explain any gaps in your employment history.", "employment_gap", ESSAY, None),
+    ("Which of our values resonates with you the most, and why?", "company_values", ESSAY, None),
+    ("Which of Stripe's operating principles resonates with you?", "company_values", ESSAY, "Stripe"),
+    ("How would you contribute to diversity, equity and inclusion at Anthropic?", "dei_contribution", ESSAY,
+     "Anthropic"),
+    ("What would you hope to accomplish in your first 90 days?", "first_90_days", ESSAY, None),
+    ("What would you build in your first month?", "first_90_days", ESSAY, None),
+    ("What do you hope to learn from this internship?", "learn_from_role", ESSAY, None),
+    ("Tell us about a time you used data to make a decision.", "bh_data", ESSAY, None),
+    ("Describe a time you came up with a creative solution to a problem.", "bh_creativity", ESSAY, None),
+    ("Tell me about a time you faced an ethical dilemma at work.", "bh_ethics", ESSAY, None),
+    ("Walk us through your resume.", "about_you", ESSAY, None),
 ]
 
 # Labels that must NOT be answered by a static rule.
@@ -127,6 +154,14 @@ NEGATIVE = [
      "efficiency. Please see our candidate privacy policy for more information on how we process your data.",
      "privacy_ack"),
     ("What programming languages are you proficient in?", "languages_list"),
+    # Open-question patterns must not swallow consent notices, EEO prompts or skill checks.
+    ("As part of our interview process, we may use AI notetakers to transcribe conversations for accuracy and "
+     "efficiency. Please see our candidate privacy policy for more information on how we process your data.",
+     "ai_usage"),
+    ("Please describe how you identify (gender, race or ethnicity) for our diversity reporting", "dei_contribution"),
+    ("How many years of experience do you have with Python?", "skill_experience"),
+    ("Tell us about a time you learned something quickly", "learned_recently"),
+    ("Tell us about something you taught yourself", "bh_mentoring"),
 ]
 
 

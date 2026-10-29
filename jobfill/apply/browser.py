@@ -166,6 +166,17 @@ def session(data_dir: Path, headless: bool = False):
         yield browser.contexts[0] if browser.contexts else browser.new_context()
 
 
+def tagged_page(context, tag: str):
+    """The tab of this application, or None if it was closed (never opens one)."""
+    for page in context.pages:
+        try:
+            if page.evaluate("() => window.name") == tag:
+                return page
+        except Exception:
+            continue
+    return None
+
+
 def find_page(context, tag: str, url: str):
     """The tab used for this application: tagged earlier, else same site, else a new tab."""
     from urllib.parse import urlparse

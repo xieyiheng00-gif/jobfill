@@ -79,12 +79,22 @@ class TestSampleForm(unittest.TestCase):
         self.assertEqual(self.f["why"]["status"], "needs_ai")
         self.assertEqual(self.f["why"]["ai_task"]["question_id"], "why_company")
         self.assertEqual(self.f["why"]["ai_task"]["limits"], {"max_chars": 1000})
+        # A known open question is written even on an optional field; the candidate may still drop it.
+        self.assertEqual((self.f["oss"]["status"], self.f["oss"]["question_id"]), ("needs_ai", "tech_opinion"))
         # Unknown open question on an optional field: skipped, not sent to the AI.
-        self.assertEqual((self.f["oss"]["status"], self.f["oss"]["question_id"]), ("skipped", "open_ended_custom"))
-        required = Resolver(self.store, self.app, today=TODAY).resolve(
-            [{"id": "q", "label": "What would you build in your first month?", "type": "textarea", "required": True}])
+        unknown = {"id": "q", "label": "If you could teach a class on anything, what would it be?", "type": "textarea"}
+        optional = Resolver(self.store, self.app, today=TODAY).resolve([unknown])
+        self.assertEqual((optional["fields"][0]["status"], optional["fields"][0]["question_id"]),
+                         ("skipped", "open_ended_custom"))
+        required = Resolver(self.store, self.app, today=TODAY).resolve([{**unknown, "required": True}])
         self.assertEqual(required["fields"][0]["ai_task"]["question_id"], "open_ended_custom")
         self.assertIn("learning", self.f["learn"]["ai_task"]["themes"])
+        # Each written answer names its technique; the context carries only the techniques on this form.
+        self.assertEqual(self.f["why"]["ai_task"]["playbook"], "why_company")
+        writing = self.result["ai_context"]["writing"]
+        self.assertEqual(set(writing["playbooks"]),
+                         {f["ai_task"]["playbook"] for f in self.f.values() if f["status"] == "needs_ai"})
+        self.assertTrue(writing["style"] and writing["checklist"])
         ctx = json.dumps(self.result["ai_context"])
         # Sensitive and irrelevant data never reaches the model.
         for secret in ("non_binary", "veteran", "disability", "608-555", "123 Example St", "f1_opt"):
@@ -229,6 +239,8 @@ class TestLearningLoop(unittest.TestCase):
         self.assertEqual(task["status"], "needs_ai")
         self.assertIn("stories", task["ai_context"]["candidate"])
         self.assertNotIn("projects", task["ai_context"]["candidate"])
+        self.assertEqual(task["ai_task"]["playbook"], "star")
+        self.assertEqual(list(task["ai_context"]["writing"]["playbooks"]), ["star"])
 
 
 class TestGPA(unittest.TestCase):

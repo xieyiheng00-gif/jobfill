@@ -3,13 +3,15 @@
 from __future__ import annotations
 
 import json
+import time
 from datetime import date
 from pathlib import Path
 
 from .. import report as results
 from ..db import ROOT
 from ..resolver import Resolver
-from . import adapters, browser
+from ..text import normalize
+from . import adapters, browser, pages
 from .detect import Detection, detect
 from .forms import extract, fill, is_empty, to_resolver_field
 
@@ -91,16 +93,23 @@ def start(store, data_dir: Path, url: str, *, company=None, role=None, source=No
 
 # --------------------------------------------------------------------------- fill
 
-def fill_frame(frame, store, app_id: int, adapter, *, overwrite: bool, files: bool = True,
-               today: date | None = None, dry_run: bool = False) -> dict:
+def fill_frame(frame, store, app_id: int, adapter, *, overwrite: bool | str, files: bool = True,
+               today: date | None = None, dry_run: bool = False, typed: dict | None = None) -> dict:
     """Fill everything the database can answer on the current page. Works on any Playwright frame.
 
+    ``overwrite``: True replaces values already in the form (a page jobfill has just opened, where nobody
+    typed yet); "own" re-types only values jobfill typed itself; False keeps every value in the form.
+    ``typed`` maps a field's answer key to the value jobfill left in it, read back after typing, and is
+    updated in place. With it, a value the candidate typed or changed is recognized: it is kept, never
+    overwritten, and recorded as their answer (an open question they answered is not asked again).
     ``dry_run`` reads and resolves the form without typing anything (a preview).
     """
     report: dict = {"fields": {}, "passes": 0}
     ai_context: dict | None = None
     seen: set[str] = set()
-    typed: list[tuple[str, dict, object]] = []   # (field id, field, value): results recorded after the check
+    attempts: list[tuple[str, dict, object]] = []   # (field id, field, value): results recorded after the check
+    theirs: list[tuple[dict, dict]] = []             # (field, resolver result): answers the candidate gave
+    logged = {a["field_key"]: a for a in store.answers(app_id)} if typed is not None else {}
     for _ in range(MAX_PASSES):
         fields = extract(frame, adapter.root_selector)
         new = [f for f in fields if f["id"] not in seen]
@@ -117,12 +126,18 @@ def fill_frame(frame, store, app_id: int, adapter, *, overwrite: bool, files: bo
             f = by_id[r["id"]]
             entry = {k: v for k, v in r.items() if k not in ("raw", "source", "match")}
             entry["kind"] = f["kind"]
-            if r["status"] == "filled":
+            owner = None if dry_run or overwrite is True else _owner(store, f, r, typed, logged)
+            if owner == "candidate":
+                entry = {"label": f["label"], "question_id": r.get("question_id"), "kind": f["kind"],
+                         "status": "filled", "value": f["value"], "fill": "kept (the candidate's answer)",
+                         "by": "candidate"}
+                theirs.append((f, r))
+            elif r["status"] == "filled":
                 if dry_run:
                     entry["fill"] = "would fill"
                 elif f["kind"] == "file" and not files:
                     entry["fill"] = "skipped (--no-files)"
-                elif not overwrite and not is_empty(f):
+                elif not is_empty(f) and not (overwrite is True or (overwrite == "own" and owner == "jobfill")):
                     entry["fill"] = "kept (already has a value)"
                 elif (tried := store.fill_attempts(app_id, _key(store, f), r["value"])) >= MAX_FILL_ATTEMPTS:
                     entry["fill"] = f"not tried: failed {tried} times with this value"
@@ -133,7 +148,7 @@ def fill_frame(frame, store, app_id: int, adapter, *, overwrite: bool, files: bo
                     if ok and f["kind"] == "file":
                         adapter.after_upload(frame)
                 if not dry_run:
-                    typed.append((r["id"], f, r["value"]))
+                    attempts.append((r["id"], f, r["value"]))
             report["fields"][r["id"]] = entry
         if dry_run:
             break   # nothing typed, so no follow-up questions can appear
@@ -144,8 +159,16 @@ def fill_frame(frame, store, app_id: int, adapter, *, overwrite: bool, files: bo
             entry["fill"] = "failed: value did not stick"
     # One result per field and run, after the check: recording "ok" first and "did not stick" later
     # would reset and bump the failure count every run, so it never reached the hand-off.
-    for fid, f, value in typed:
-        _note(store, app_id, f, report["fields"][fid], value)
+    for fid, f, value in attempts:
+        entry = report["fields"][fid]
+        _note(store, app_id, f, entry, value)
+        if typed is not None and not str(entry["fill"]).startswith(("kept", "skipped", "not tried")) \
+                and fid in final:
+            typed[_key(store, f)] = final[fid]["value"]   # what jobfill left there, ok or not
+    for f, r in theirs:
+        store.record_answer(app_id, _key(store, f), f["label"], f["value"], question_id=r.get("question_id"),
+                            source="user", tier=r.get("tier"), status="filled", fill="kept (the candidate's answer)",
+                            section=f.get("section"), idx=f.get("index"))
     if ai_context:
         report["ai_context"] = ai_context
     return report
@@ -153,6 +176,35 @@ def fill_frame(frame, store, app_id: int, adapter, *, overwrite: bool, files: bo
 
 def _key(store, f: dict) -> str:
     return store.answer_key(f["label"], f.get("section"), f.get("index"))
+
+
+def _flat(value) -> str:
+    return normalize(", ".join(map(str, value)) if isinstance(value, list) else str(value))
+
+
+def _close(a, b) -> bool:
+    """Same answer as displayed: "United States +1" in a dropdown is the stored "United States"."""
+    x, y = _flat(a), _flat(b)
+    return x == y or bool(x and y and (x in y or y in x))
+
+
+def _owner(store, f: dict, r: dict, typed: dict | None, logged: dict) -> str | None:
+    """Whose value is in this field: "jobfill", "candidate", or None (empty, or what the profile says anyway).
+
+    jobfill knows what it left in each field (``typed``); any other value is the candidate's, unless it
+    already matches the profile's answer (a portal that prefills from the candidate's account).
+    """
+    if typed is None or is_empty(f):
+        return None
+    key = _key(store, f)
+    if key in typed:
+        return "jobfill" if _flat(f["value"]) == _flat(typed[key]) else "candidate"
+    if r["status"] == "filled" and _close(f["value"], r["value"]):
+        return None
+    row = logged.get(key)
+    if row and row["fill"] == "ok" and _close(f["value"], row["value"]):
+        return "jobfill"   # typed before jobfill kept track of its own values
+    return "candidate"
 
 
 def _note(store, app_id: int, f: dict, entry: dict, value) -> None:
@@ -187,7 +239,15 @@ def summarize(report: dict, app_id: int) -> dict:
         "uncertain": [{"field": v["field"], "label": v["label"], "candidates": v.get("candidates")} for v in pick("uncertain")],
         "unmatched": [{"field": v["field"], "label": v["label"]} for v in pick("unmatched")],
         "needs_ai": [{"field": v["field"], **v["ai_task"]} for v in pick("needs_ai")],
+        # Answered by the candidate in the window: kept as they are, never asked again or overwritten.
+        "by_candidate": [{"field": k, "label": v["label"], "value": v.get("value")}
+                         for k, v in fields.items() if v.get("by") == "candidate"],
+        "page": report.get("page"),
     }
+    if report.get("moved_by_candidate"):
+        out["moved_by_candidate"] = True
+        out["note"] = ("The candidate moved on to this page themselves; jobfill filled what was left and kept "
+                       "their answers. Carry on from here.")
     if out["needs_ai"] and report.get("ai_context"):
         out["ai_context"] = report["ai_context"]
     if "login_required" in out["blockers"]:
@@ -206,24 +266,60 @@ def open_page(ctx, state: dict, adapter):
     return page, fresh
 
 
-def fill_command(store, data_dir: Path, app_id: int, *, overwrite=False, headless=False, files=True,
-                 dry_run=False) -> dict:
-    state = load_state(data_dir, app_id)
-    if state["handler"] != "python":
-        raise ApplyError(f"application {app_id} is handled by the agent ({state['handler']}), not the Python filler")
-    adapter = adapters.get(state["ats"])
-    with browser.session(data_dir, headless) as ctx:
-        page, fresh = open_page(ctx, state, adapter)
-        blockers = adapter.prepare(page, store, dry_run=dry_run)
-        if {"login_required", "job_closed", "email_gate", "consent_required"} & set(blockers):
-            report = {"fields": {}, "blockers": blockers}
-        else:
-            report = fill_frame(adapter.frame(page), store, app_id, adapter,
-                                overwrite=overwrite or not state.get("filled_once"), files=files, dry_run=dry_run)
-            report["blockers"] = blockers
-            state["filled_once"] = state.get("filled_once") or not dry_run
-        state["page_url"] = page.url
-    save_state(data_dir, app_id, state)
+# --------------------------------------------------------------------------- where the candidate is
+
+GATES = {"login_required", "job_closed", "email_gate", "consent_required"}
+
+
+def place(page, adapter, state: dict) -> dict:
+    """Which of this application's pages the window shows (see pages.py): current, new, earlier or unknown."""
+    info = pages.settle(page, adapter)
+    plist = state.setdefault("pages", [])
+    if pages.blank(info):   # nothing to read (still loading, or a page without questions)
+        return {"where": "unknown", "index": max(len(plist) - 1, 0), "info": info}
+    where, index = pages.locate(plist, info)
+    return {"where": where, "index": index, "info": info}
+
+
+def paused(state: dict, spot: dict, app_id: int) -> dict:
+    """The candidate went back to an earlier page: jobfill waits for them instead of acting."""
+    plist = state["pages"]
+    pos = pages.position(plist, spot["index"])
+    title = f" ({pos['title']})" if pos.get("title") else ""
+    return {"app_id": app_id, "paused": "candidate_went_back", "page": pos, "furthest_page": len(plist),
+            "next": f"The candidate went back to page {pos['n']} of {len(plist)}{title}, probably to check or change "
+                    "something. Stop and wait: do not fill, click or submit. Run "
+                    f"`python -m jobfill apply watch --app {app_id}` (in the background if you can) to learn when "
+                    f"they move; when they are back on page {len(plist)} or further, run `apply fill` again. Fill "
+                    "the earlier page only if they ask you to (`apply fill --here`)."}
+
+
+# --------------------------------------------------------------------------- commands on the open page
+
+def fill_page(store, data_dir: Path, app_id: int, state: dict, page, adapter, *, fresh=False, overwrite=False,
+              files=True, dry_run=False, here=False) -> dict:
+    """`apply fill` on the page in the window. Returns the summary; updates ``state`` (the caller saves it)."""
+    blockers = adapter.prepare(page, store, dry_run=dry_run)
+    if GATES & set(blockers):
+        report = {"fields": {}, "blockers": blockers}
+    else:
+        spot = place(page, adapter, state)
+        if spot["where"] == "earlier" and not here:
+            state["page_url"] = page.url
+            return paused(state, spot, app_id)
+        # A page jobfill has just opened has no answers of the candidate's yet: replace prefilled values.
+        full = fresh and not state.get("filled_once")
+        report = fill_frame(adapter.frame(page), store, app_id, adapter,
+                            overwrite=True if full else ("own" if overwrite else False),
+                            typed=state.setdefault("typed", {}), files=files, dry_run=dry_run)
+        report["blockers"] = blockers
+        if spot["where"] == "new" and spot["index"] > 0:
+            report["moved_by_candidate"] = True
+        if not dry_run and spot["where"] != "unknown":
+            pages.remember(state["pages"], spot["where"], spot["index"], spot["info"])
+        report["page"] = pages.position(state["pages"], spot["index"])
+        state["filled_once"] = state.get("filled_once") or not dry_run
+    state["page_url"] = page.url
     (state_dir(data_dir, app_id) / "report.json").write_text(json.dumps(report, indent=2, ensure_ascii=False),
                                                              encoding="utf-8")
     out = summarize(report, app_id)
@@ -232,23 +328,160 @@ def fill_command(store, data_dir: Path, app_id: int, *, overwrite=False, headles
     return out
 
 
-def set_command(store, data_dir: Path, app_id: int, field_id: str, value, *, headless=False) -> dict:
-    state = load_state(data_dir, app_id)
-    adapter = adapters.get(state["ats"])
-    with browser.session(data_dir, headless) as ctx:
-        page, _ = open_page(ctx, state, adapter)
-        frame = adapter.frame(page)
-        fields = {f["id"]: f for f in extract(frame, adapter.root_selector, read_options=False)}
-        f = fields.get(field_id) or fields.get("g-" + field_id)
-        if f is None:
-            raise ApplyError(f"field {field_id} is not on the page (the page may have reloaded; run `apply fill` again)")
-        ok, note = fill(frame, f, value, root=ROOT, after=adapter.after_fill, custom=adapter.custom_fill)
+def set_field(store, app_id: int, state: dict, page, adapter, field_id: str, value, *, force=False,
+              here=False) -> dict:
+    spot = place(page, adapter, state)
+    if spot["where"] == "earlier" and not here:
+        return paused(state, spot, app_id)
+    frame = adapter.frame(page)
+    fields = {f["id"]: f for f in extract(frame, adapter.root_selector, read_options=False)}
+    f = fields.get(field_id) or fields.get("g-" + field_id)
+    if f is None:
+        raise ApplyError(f"field {field_id} is not on the page (the candidate may have moved to another page, or "
+                         "it reloaded; run `apply fill` again)")
+    typed = state.setdefault("typed", {})
+    if not force and _owner(store, f, {"status": "set"}, typed, {}) == "candidate":
+        return {"field": field_id, "label": f["label"], "ok": False, "kept": f["value"],
+                "note": "The candidate already answered this in the window; their answer is kept. Change it only "
+                        "if they ask you to (--force)."}
+    ok, note = fill(frame, f, value, root=ROOT, after=adapter.after_fill, custom=adapter.custom_fill)
+    after = {g["id"]: g for g in extract(frame, adapter.root_selector, read_options=False)}.get(f["id"])
+    if after is not None:
+        typed[_key(store, f)] = after["value"]
     if ok:
         store.record_answer(app_id, _key(store, f), f["label"], value, source="user", status="filled", fill="ok",
                             section=f.get("section"), idx=f.get("index"))
         store.note_fill(app_id, _key(store, f), "ok", value)   # clears any earlier failures
-        results.write(store, data_dir, app_id)
     return {"field": field_id, "label": f["label"], "ok": ok, "note": note or None}
+
+
+def next_page(state: dict, page, adapter, app_id: int) -> dict:
+    """Click Next / Save and Continue, unless the candidate already moved on or went back."""
+    spot = place(page, adapter, state)
+    plist = state["pages"]
+    if spot["where"] == "earlier":
+        return paused(state, spot, app_id)
+    if spot["where"] == "new" and plist:
+        # Left for `apply fill` to record, so its summary says the candidate moved on too.
+        return {"clicked": None, "moved_by_candidate": True, "page": pages.position(plist, spot["index"]),
+                "next": "The candidate already moved on to this page themselves; do not click Next for them. Run "
+                        f"`python -m jobfill apply fill --app {app_id}` for it (their answers are kept)."}
+    if spot["where"] != "unknown":
+        pages.remember(plist, spot["where"], spot["index"], spot["info"])
+    frame = adapter.frame(page)
+    btn = adapter.next_button(frame)
+    if btn is None:
+        raise ApplyError("No Next/Continue button on this page (the next button may be the final submit).")
+    label = btn.inner_text(timeout=2000) if btn.count() else ""
+    btn.click()
+    page.wait_for_load_state("domcontentloaded")
+    adapter.wait_ready(page)
+    after = place(page, adapter, state)
+    errors = adapter.errors(adapter.frame(page))
+    moved = after["where"] != "current"
+    if after["where"] == "new":
+        pages.remember(plist, "new", after["index"], after["info"])
+    state["page_url"] = page.url
+    pos = pages.position(plist, after["index"])
+    return {"clicked": label.strip(), "moved": moved, "page": pos, "page_url": page.url, "errors": errors,
+            "next": f"Run `python -m jobfill apply fill --app {app_id}` for this step." if moved else
+                    f"Still on page {pos['n']}: the site did not accept it. Fix what `errors` lists (or ask the "
+                    "candidate), then run `apply next` again."}
+
+
+WATCH_EVENTS = {
+    "moved_on": "The candidate moved on to a new page themselves. Run `python -m jobfill apply fill --app {id}`: "
+                "it fills what is left on that page and keeps their answers.",
+    "returned": "The candidate is back on the furthest page. Run `python -m jobfill apply fill --app {id}` to go on.",
+    "submitted": "The site confirmed the application: the candidate submitted it. It is marked submitted.",
+    "closed": "The jobfill tab was closed. Ask the candidate whether to stop; `apply fill` would reopen the "
+              "application from its start link.",
+    "timeout": "Nothing changed. Run `apply watch` again to keep waiting, or check in with the candidate.",
+}
+
+
+def watch_page(store, data_dir: Path, app_id: int, state: dict, page, adapter, *, timeout: float = 600,
+               interval: float = 2.0) -> dict:
+    """Wait until the candidate changes page (Next, Back, submit, closing the tab) and say what to do."""
+    plist = state.get("pages", [])
+
+    def observe():
+        if page.is_closed():
+            return ("closed", None)
+        try:
+            info = pages.read(page, adapter)
+            if pages.blank(info):   # loading, or a page with no questions: maybe the confirmation
+                return ("submitted", None) if adapter.confirmed(page) else None
+        except Exception:
+            return None             # navigating
+        return pages.locate(plist, info)
+
+    def event(obs) -> dict:
+        kind = {"new": "moved_on", "earlier": "went_back", "current": "returned"}.get(obs[0], obs[0])
+        out = {"app_id": app_id, "event": kind}
+        if obs[1] is not None:
+            out["page"] = pages.position(plist, obs[1])
+        if kind == "went_back":
+            return {**out, **paused(state, {"index": obs[1]}, app_id)}
+        if kind == "submitted":
+            store.update_application(app_id, status="submitted")
+            out["record"] = results.write(store, data_dir, app_id)["markdown"]
+        return {**out, "next": WATCH_EVENTS[kind].format(id=app_id)}
+
+    deadline = time.monotonic() + timeout
+    base, seen = None, None
+    while time.monotonic() < deadline:
+        obs = observe()
+        if obs is not None and obs[0] in ("closed", "submitted"):
+            return event(obs)
+        if base is None:
+            base = obs
+            if base is not None and base[0] == "new":
+                return event(base)   # the candidate had already moved on
+        elif obs is not None and obs != base:
+            if obs != seen:
+                seen = obs           # seen once; a page mid-change must look the same twice
+            elif base[0] == "earlier" and obs[0] == "earlier":
+                base, seen = obs, None   # still looking through earlier pages: keep waiting
+            else:
+                return event(obs)
+        try:
+            page.wait_for_timeout(interval * 1000)
+        except Exception:
+            return event(("closed", None))
+    out = {"app_id": app_id, "event": "timeout", "next": WATCH_EVENTS["timeout"]}
+    if base is not None and base[1] is not None:
+        out["page"] = pages.position(plist, base[1])
+    return out
+
+
+# --------------------------------------------------------------------------- commands
+
+def fill_command(store, data_dir: Path, app_id: int, *, overwrite=False, headless=False, files=True,
+                 dry_run=False, here=False) -> dict:
+    state = load_state(data_dir, app_id)
+    if state["handler"] != "python":
+        raise ApplyError(f"application {app_id} is handled by the agent ({state['handler']}), not the Python filler")
+    adapter = adapters.get(state["ats"])
+    with browser.session(data_dir, headless) as ctx:
+        page, fresh = open_page(ctx, state, adapter)
+        out = fill_page(store, data_dir, app_id, state, page, adapter, fresh=fresh, overwrite=overwrite, files=files,
+                        dry_run=dry_run, here=here)
+    save_state(data_dir, app_id, state)
+    return out
+
+
+def set_command(store, data_dir: Path, app_id: int, field_id: str, value, *, headless=False, force=False,
+                here=False) -> dict:
+    state = load_state(data_dir, app_id)
+    adapter = adapters.get(state["ats"])
+    with browser.session(data_dir, headless) as ctx:
+        page, _ = open_page(ctx, state, adapter)
+        out = set_field(store, app_id, state, page, adapter, field_id, value, force=force, here=here)
+    save_state(data_dir, app_id, state)
+    if out.get("ok"):
+        results.write(store, data_dir, app_id)
+    return out
 
 
 def next_command(data_dir: Path, app_id: int, *, headless=False) -> dict:
@@ -256,19 +489,19 @@ def next_command(data_dir: Path, app_id: int, *, headless=False) -> dict:
     adapter = adapters.get(state["ats"])
     with browser.session(data_dir, headless) as ctx:
         page, _ = open_page(ctx, state, adapter)
-        frame = adapter.frame(page)
-        btn = adapter.next_button(frame)
-        if btn is None:
-            raise ApplyError("No Next/Continue button on this page (the next button may be the final submit).")
-        label = btn.inner_text(timeout=2000) if btn.count() else ""
-        btn.click()
-        page.wait_for_load_state("domcontentloaded")
-        adapter.wait_ready(page)
-        errors = adapter.errors(adapter.frame(page))
-        state["page_url"] = page.url
+        out = next_page(state, page, adapter, app_id)
     save_state(data_dir, app_id, state)
-    return {"clicked": label.strip(), "page_url": state["page_url"], "errors": errors,
-            "next": f"Run `python -m jobfill apply fill --app {app_id}` for this step."}
+    return out
+
+
+def watch_command(store, data_dir: Path, app_id: int, *, timeout: float = 600, headless=False) -> dict:
+    state = load_state(data_dir, app_id)
+    adapter = adapters.get(state["ats"])
+    with browser.session(data_dir, headless) as ctx:
+        page = browser.tagged_page(ctx, state["tag"])
+        if page is None:
+            return {"app_id": app_id, "event": "closed", "next": WATCH_EVENTS["closed"]}
+        return watch_page(store, data_dir, app_id, state, page, adapter, timeout=timeout)
 
 
 def submit_command(store, data_dir: Path, app_id: int, *, confirm: bool, headless=False) -> dict:
@@ -279,6 +512,9 @@ def submit_command(store, data_dir: Path, app_id: int, *, confirm: bool, headles
     adapter = adapters.get(state["ats"])
     with browser.session(data_dir, headless) as ctx:
         page, _ = open_page(ctx, state, adapter)
+        spot = place(page, adapter, state)
+        if spot["where"] == "earlier":
+            return {"submitted": False, **paused(state, spot, app_id)}
         frame = adapter.frame(page)
         btn = adapter.submit_button(frame)
         if btn is None:

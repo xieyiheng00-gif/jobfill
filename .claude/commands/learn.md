@@ -29,14 +29,19 @@ seen, and fuzzy `candidates`.
      `python -m jobfill fact set <category.name> "<value>"`.
 
 3. **Must be written per application** - the honest answer depends on the company or role, or a
-   stored text pasted into two applications would look templated ("What would you build in your
-   first 90 days?", "Which of our values resonates with you?"). This is **tier 3**:
+   stored text pasted into two applications would look templated ("If you could build one new
+   feature for our app, what would it be?", "Which of our customers would you most like to work
+   with?"). This is **tier 3**:
    `python -m jobfill learn <pending_id> --new-question <id> --ai <unique|adapt> --scope <company|application> --context summary,experience,projects,skills --guidance "<one sentence on what a good answer does>"`
    - `unique`: written from facts + posting. `adapt`: tailors stored stories/summary.
    - `scope company`: may be reused when the same company asks again; `application`: never reused.
    - Context keys: `summary, motivations, career_goals, strengths, weaknesses, work_style,
-     interests, education, experience, experience_full, projects, projects_full, skills, stories`.
-     List only what the answer needs; fewer keys = fewer tokens on every future use.
+     interests, education, coursework, experience, experience_full, projects, projects_full, skills,
+     stories`. List only what the answer needs; fewer keys = fewer tokens on every future use.
+   - `--playbook <name>`: the writing technique (`jobfill/catalog/playbooks.py`): `star` (behavioral),
+     `why_company`, `why_role`, `fit`, `about_you`, `project`, `learning`, `values`, `opinion`,
+     `explain`, `process`, `plan`, `goals`, `candid` (gaps, leaving), `direct`, and others. Without
+     it, `--category behavioral` gets `star`, `motivation` gets `why_role`, anything else `direct`.
 
 4. **Noise** (captcha labels, layout text, duplicate hidden inputs):
    `python -m jobfill learn <pending_id> --ignore --reason "<why>"`
