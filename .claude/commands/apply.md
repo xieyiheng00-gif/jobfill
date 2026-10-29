@@ -67,8 +67,10 @@ The output includes `app_id`, company, role, and earlier applications to the sam
    One-off questions not worth learning: `apply set` with the answer.
 3. Multi-page forms (iCIMS, Workday): when a page is done, `python -m jobfill apply next --app <ID>`
    clicks Next / Save and Continue (it never clicks a final submit), then `apply fill` again for the new
-   page. Workday's own dropdown widgets are not read yet: anything left blank on a Workday page goes to
-   the candidate to pick in the window.
+   page. Workday's search-and-pick menus ("How Did You Hear About Us?", also two-level ones such as
+   Job Boards > LinkedIn) are picked by jobfill; if a choice is not in the menu the field comes back as
+   a `handoff` whose `why` lists the menu's real choices. Anything else left blank on a Workday page
+   goes to the candidate to pick in the window.
 4. Review, in ONE message: every written answer (numbered, with character/word count), any
    `handoff` field still unresolved, and a reminder that the window shows the whole filled form.
    Ask them to check the window, then to say "submit" or list changes.

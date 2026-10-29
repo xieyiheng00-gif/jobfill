@@ -100,6 +100,7 @@ def fill_frame(frame, store, app_id: int, adapter, *, overwrite: bool, files: bo
     report: dict = {"fields": {}, "passes": 0}
     ai_context: dict | None = None
     seen: set[str] = set()
+    typed: list[tuple[str, dict, object]] = []   # (field id, field, value): results recorded after the check
     for _ in range(MAX_PASSES):
         fields = extract(frame, adapter.root_selector)
         new = [f for f in fields if f["id"] not in seen]
@@ -132,7 +133,7 @@ def fill_frame(frame, store, app_id: int, adapter, *, overwrite: bool, files: bo
                     if ok and f["kind"] == "file":
                         adapter.after_upload(frame)
                 if not dry_run:
-                    _note(store, app_id, f, entry, r["value"])
+                    typed.append((r["id"], f, r["value"]))
             report["fields"][r["id"]] = entry
         if dry_run:
             break   # nothing typed, so no follow-up questions can appear
@@ -141,8 +142,10 @@ def fill_frame(frame, store, app_id: int, adapter, *, overwrite: bool, files: bo
     for fid, entry in report["fields"].items():
         if entry.get("fill") == "ok" and fid in final and is_empty(final[fid]) and entry["kind"] != "checkbox":
             entry["fill"] = "failed: value did not stick"
-            if not dry_run:
-                _note(store, app_id, final[fid], entry, entry.get("value"))
+    # One result per field and run, after the check: recording "ok" first and "did not stick" later
+    # would reset and bump the failure count every run, so it never reached the hand-off.
+    for fid, f, value in typed:
+        _note(store, app_id, f, report["fields"][fid], value)
     if ai_context:
         report["ai_context"] = ai_context
     return report

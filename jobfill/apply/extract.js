@@ -139,6 +139,13 @@
   };
   const required = (el, label) =>
     el.required || el.getAttribute("aria-required") === "true" || /[*✱]|\(required\)/i.test(label);
+  // Choices already picked in a Workday prompt, read from its pills.
+  const pillsOf = (el) => {
+    const box = el.closest("[data-automation-id^='formField']") || el.closest("[data-automation-id='multiSelectContainer']")
+      || el.parentElement;
+    return Array.from(box.querySelectorAll("[data-automation-id='selectedItem']"))
+      .map((p) => clean((p.getAttribute("title") || p.innerText || "").replace(/[×✕]/g, ""))).filter(Boolean);
+  };
   // React-Select shows the chosen option in a sibling element, not in the input itself.
   const comboValue = (el) => {
     let box = el.parentElement;
@@ -203,8 +210,11 @@
     }
 
     const role = (el.getAttribute("role") || "").toLowerCase();
+    // Workday's prompt: a plain text input that only searches; the answer is a choice clicked in its
+    // pop-up menu, shown afterwards as a pill while the box itself stays empty.
+    const selectInput = el.getAttribute("data-uxi-widget-type") === "selectinput";
     const kind = type === "file" ? "file" : t === "select" ? "select" : t === "textarea" ? "textarea"
-      : role === "combobox" ? "combobox" : choice ? "checkbox" : "input";
+      : selectInput ? "selectinput" : role === "combobox" ? "combobox" : choice ? "checkbox" : "input";
     let label = directLabel(el);
     if (!label || (choice && label.length < 2) || (kind === "file" && GENERIC.test(label))) {
       label = blockLabel(el, [el]) || label;
@@ -235,6 +245,8 @@
       f.value = el.checked;
     } else if (kind === "combobox") {
       f.value = comboValue(el);
+    } else if (kind === "selectinput") {
+      f.value = pillsOf(el).join(", ");   // judged by the pills, never by the (always empty) search box
     } else if (kind === "file") {
       f.value = el.files && el.files.length ? el.files[0].name : "";
     } else {

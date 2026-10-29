@@ -1,0 +1,78 @@
+<!doctype html>
+<html><head><meta charset="utf-8"><title>My Information - Visa Careers</title></head>
+<body>
+<!-- A local stand-in for Workday's "How Did You Hear About Us?" prompt (data-uxi-widget-type=selectinput):
+     a plain text input that only searches (on Enter), a two-level pop-up menu of role=option entries,
+     and the choice shown as a selectedItem pill while the box stays empty. Like Workday, reopening the
+     menu returns to the level last shown. Flags: #nosearch (search finds nothing), #nomarks (categories
+     carry no chevron). -->
+<div data-automation-id="formField-legalNameSection_firstName">
+  <label for="name--first">Given Name(s)*</label><input id="name--first" type="text" data-automation-id="legalNameSection_firstName">
+</div>
+<div data-automation-id="formField-source">
+  <label for="source--source">How Did You Hear About Us?<abbr title="required">*</abbr></label>
+  <div data-automation-id="multiSelectContainer">
+    <div data-automation-id="selectedItemList"></div>
+    <input id="source--source" type="text" data-uxi-widget-type="selectinput" data-automation-id="searchBox"
+           placeholder="Search" autocomplete="off">
+  </div>
+  <div data-automation-id="activeListContainer" role="listbox" hidden></div>
+</div>
+<script>
+const tree = [["Career Site", null], ["Conference", null],
+              ["Job Boards", ["12Twenty", "Glassdoor", "Indeed", "LinkedIn"]], ["Military Talent Program", null],
+              ["Other", null], ["University Career Fair", null], ["Visa Recruiter", null]];
+const flags = new URLSearchParams(location.hash.slice(1));
+const input = document.getElementById("source--source");
+const list = document.querySelector("[data-automation-id=activeListContainer]");
+const pills = document.querySelector("[data-automation-id=selectedItemList]");
+let level = null;
+window.picks = 0;
+const option = (text, branch, onClick) => {
+  const d = document.createElement("div");
+  d.setAttribute("role", "option"); d.setAttribute("data-automation-id", "promptOption");
+  d.setAttribute("data-automation-label", text);
+  d.innerHTML = `<span>${text}</span>` +
+    (branch && !flags.has("nomarks") ? '<span data-automation-id="promptRightChevron">&#8250;</span>' : "");
+  d.addEventListener("click", onClick);
+  return d;
+};
+const render = (items, back) => {
+  list.innerHTML = "";
+  if (back) {
+    const b = document.createElement("div");
+    b.setAttribute("data-automation-id", "promptBackButton"); b.setAttribute("role", "button"); b.textContent = "Back";
+    b.addEventListener("click", showTop);
+    list.appendChild(b);
+  }
+  if (!items.length) list.insertAdjacentHTML("beforeend", "<div>No Items.</div>");
+  items.forEach((i) => list.appendChild(i));
+  list.hidden = false;
+};
+function showTop() { level = null; render(tree.map(([t, kids]) => option(t, !!kids, () => kids ? showLevel(t) : pick(t)))); }
+function showLevel(t) {
+  level = t;
+  render(tree.find(([n]) => n === t)[1].map((k) => option(k, false, () => pick(k))), true);
+}
+function pick(text) {
+  const p = document.createElement("div");
+  p.setAttribute("data-automation-id", "selectedItem"); p.title = text;
+  p.innerHTML = `<span>${text}</span><span data-automation-id="DELETE_charm" role="button" aria-label="Remove ${text}">&#215;</span>`;
+  p.querySelector("[data-automation-id=DELETE_charm]").addEventListener("click", () => p.remove());
+  pills.appendChild(p);
+  input.value = "";
+  list.hidden = true;
+  window.picks += 1;
+}
+input.addEventListener("click", () => { if (list.hidden) (level ? showLevel(level) : showTop()); });
+input.addEventListener("keydown", (e) => {
+  if (e.key === "Escape") { list.hidden = true; return; }
+  if (e.key !== "Enter") return;
+  e.preventDefault();
+  const q = input.value.trim().toLowerCase();
+  const leaves = tree.flatMap(([t, kids]) => kids ? kids : [t]);
+  const hits = flags.has("nosearch") ? [] : leaves.filter((l) => l.toLowerCase().includes(q));
+  render(hits.map((h) => option(h, false, () => pick(h))));
+});
+</script>
+</body></html>

@@ -186,6 +186,155 @@ class Ashby(Adapter):
         frame.wait_for_timeout(1500)
 
 
+# ---- Workday prompt ("selectinput"): a search box with a pop-up menu; only a clicked choice counts,
+# and it then shows as a pill while the box stays empty. Menus can be two levels (category -> choice).
+
+PILLS_JS = r"""(id) => {
+  const el = document.querySelector(`[data-jobfill-id="${id}"]`);
+  const box = el.closest("[data-automation-id^='formField']") || el.closest("[data-automation-id='multiSelectContainer']") || el.parentElement;
+  return Array.from(box.querySelectorAll("[data-automation-id='selectedItem']"))
+    .map((p) => (p.getAttribute("title") || p.innerText || "").replace(/[×✕]/g, "").replace(/\s+/g, " ").trim()).filter(Boolean);
+}"""
+
+# Visible menu entries (not the pills), tagged data-jobfill-opt=<n>. ``branch`` marks a category that
+# opens a sub-level (chevron / aria-haspopup); ``marked`` says whether this menu marks categories at all.
+MENU_JS = r"""() => {
+  const shown = (e) => e.getClientRects().length > 0 && getComputedStyle(e).visibility !== "hidden";
+  let items = Array.from(document.querySelectorAll("[role=option], [data-automation-id=promptOption]"))
+    .filter((o) => shown(o) && !o.closest("[data-automation-id='selectedItem'], [data-automation-id='selectedItemList']"));
+  items = items.filter((o) => !items.some((p) => p !== o && p.contains(o)));
+  document.querySelectorAll("[data-jobfill-opt]").forEach((o) => o.removeAttribute("data-jobfill-opt"));
+  return items.map((o, i) => {
+    o.setAttribute("data-jobfill-opt", String(i));
+    const branch = !!o.querySelector("[data-automation-id*='chevron' i], [data-automation-id*='arrow' i], [class*='chevron' i]")
+      || o.getAttribute("aria-haspopup") === "true" || o.hasAttribute("aria-expanded");
+    return {text: (o.getAttribute("data-automation-label") || o.innerText || "").replace(/\s+/g, " ").trim(), branch};
+  });
+}"""
+
+REMOVE_PILL_JS = r"""([id, text]) => {
+  const el = document.querySelector(`[data-jobfill-id="${id}"]`);
+  const box = el.closest("[data-automation-id^='formField']") || el.closest("[data-automation-id='multiSelectContainer']") || el.parentElement;
+  const norm = (s) => (s || "").replace(/[×✕]/g, "").replace(/\s+/g, " ").trim().toLowerCase();
+  const pill = Array.from(box.querySelectorAll("[data-automation-id='selectedItem']"))
+    .find((p) => norm(p.getAttribute("title") || p.innerText) === norm(text));
+  const x = pill && pill.querySelector("[data-automation-id*='delete' i], [data-automation-id*='remove' i], [aria-label*='remove' i], [aria-label*='delete' i], [role=button], button");
+  if (x) x.click();
+  return !!x;
+}"""
+
+
+def _same(a: str, b: str) -> bool:
+    return normalize(a) == normalize(b)
+
+
+def _pick(items: list[dict], want: str) -> int | None:
+    """The menu entry meaning ``want``: exact, then 'Job Boards > LinkedIn'-style suffix, then prefix."""
+    w = normalize(want)
+    norms = [normalize(i["text"]) for i in items]
+    for test in (lambda n: n == w, lambda n: n.endswith(" " + w), lambda n: n.startswith(w + " ")):
+        hits = [k for k, n in enumerate(norms) if n and test(n)]
+        if hits:
+            return hits[0]
+    return None
+
+
+def _menu(frame, before: list[dict] | None = None, wait_ms: int = 4000) -> list[dict]:
+    """Menu entries once they appear (or change from ``before``, e.g. after search or drill-down)."""
+    items: list[dict] = []
+    for _ in range(max(1, wait_ms // 200)):
+        frame.wait_for_timeout(200)
+        items = frame.evaluate(MENU_JS)
+        if items and items != before:
+            break
+    return items
+
+
+BACK = "[data-automation-id*='back' i]:visible, [aria-label*='back' i]:visible"
+
+
+def _to_top(frame, items: list[dict]) -> list[dict]:
+    """Workday reopens the menu at the level last shown: step back up to the top level."""
+    for _ in range(3):
+        back = frame.locator(BACK).first
+        if not back.count():
+            break
+        back.click()
+        items = _menu(frame, before=items, wait_ms=1500)
+    return items
+
+
+def fill_selectinput(frame, field: dict, value) -> tuple[bool, str]:
+    loc = frame.locator(f'[data-jobfill-id="{field["id"]}"]')
+    pills = lambda: frame.evaluate(PILLS_JS, field["id"])
+    for want in (value if isinstance(value, list) else [value]):
+        want = str(want)
+        if any(_same(p, want) for p in pills()):
+            continue   # already chosen
+        start = pills()
+
+        # 1. Search: Workday searches every level once Enter is pressed.
+        loc.click()
+        loc.fill("")
+        loc.type(want, delay=20)
+        loc.press("Enter")
+        found = _menu(frame)
+        k = _pick(found, want)
+        if k is not None:
+            frame.locator(f'[data-jobfill-opt="{k}"]').click()
+            frame.wait_for_timeout(500)
+            if any(_same(p, want) for p in pills()):
+                continue
+
+        # 2. Browse: open each category and look inside (Job Boards -> LinkedIn).
+        loc.press("Escape")
+        loc.fill("")
+        seen: list[str] = []
+        loc.click()
+        top = _to_top(frame, _menu(frame))
+        marked = any(i["branch"] for i in top)
+        done = False
+        for entry in top:
+            seen.append(entry["text"])
+            if marked and not entry["branch"] and not _same(entry["text"], want):
+                continue   # a plain choice, not a category: clicking it would select it
+            if frame.evaluate(MENU_JS) != top:   # back to the top level for every category
+                _to_top(frame, frame.evaluate(MENU_JS))
+                if frame.evaluate(MENU_JS) != top:
+                    loc.press("Escape")
+                    loc.click()
+                    _to_top(frame, _menu(frame))
+            now = frame.evaluate(MENU_JS)
+            k = next((n for n, i in enumerate(now) if i["text"] == entry["text"]), None)
+            if k is None:
+                continue
+            frame.locator(f'[data-jobfill-opt="{k}"]').click()
+            frame.wait_for_timeout(500)
+            added = [p for p in pills() if p not in start]
+            if any(_same(p, want) for p in added):
+                done = True
+                break
+            for p in added:   # it was a plain choice after all (menu without category marks): undo it
+                frame.evaluate(REMOVE_PILL_JS, [field["id"], p])
+                frame.wait_for_timeout(300)
+            if added:
+                continue
+            sub = _menu(frame, before=now, wait_ms=2000)
+            if sub == now:
+                continue
+            seen += [f"{entry['text']} > {i['text']}" for i in sub if i["text"] != entry["text"]]
+            k = _pick(sub, want)
+            if k is not None:
+                frame.locator(f'[data-jobfill-opt="{k}"]').click()
+                frame.wait_for_timeout(500)
+                done = any(_same(p, want) for p in pills())
+                break
+        if not done:
+            loc.press("Escape")
+            return False, f"no menu choice matches {want!r}; it offers: {seen[:40]}"
+    return True, ""
+
+
 class Workday(Adapter):
     """Workday: each company is its own tenant with its own account. Apply -> Apply Manually ->
     Sign in with email, then a multi-page form ("Save and Continue")."""
@@ -207,6 +356,11 @@ class Workday(Adapter):
             button.click()
         page.wait_for_timeout(1500)
         self.wait_ready(page)
+
+    def custom_fill(self, frame, field: dict, value):
+        if field.get("kind") == "selectinput":
+            return fill_selectinput(frame, field, value)
+        return None
 
     def next_button(self, frame):
         nxt = frame.locator("[data-automation-id=bottom-navigation-next-button]:visible").first

@@ -84,6 +84,8 @@ def to_resolver_field(f: dict) -> dict:
         rtype = "multiselect" if f.get("multiple") else "select"
     elif kind == "combobox":
         rtype = "select" if f.get("options") else "text"
+    elif kind == "selectinput":
+        rtype = "text"    # the plain answer ("LinkedIn"); the adapter finds it in the menu, at any level
     elif kind == "buttons":
         rtype = "radio"   # toggle-button group behaves like a radio group
     else:
@@ -224,6 +226,9 @@ def fill(frame, f: dict, value, *, root: Path, after=None, custom=None) -> tuple
             ok, note = _fill_combobox(frame, loc, f["id"], value)
             if not ok:
                 return ok, note
+        elif kind == "selectinput":
+            # Typing alone is only a search that Workday throws away; never report it as filled.
+            return False, "this menu needs the Workday handler (only a clicked choice counts)"
         else:
             loc.fill(str(value), timeout=5000)
             loc.dispatch_event("blur")
