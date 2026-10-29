@@ -586,7 +586,7 @@ def speaks_language(ctx, language):
 def skills_list(ctx, limit=25):
     skills = sorted(ctx.records("skill"), key=lambda r: (-(r.get("years") or 0)))
     names = [r["name"] for r in skills if not lacks_skill(r)][:limit]
-    if ctx.field.get("options"):   # checkbox list of skills: tick every one we have
+    if ctx.field.get("options") or ctx.field.get("picks"):   # checkboxes, or a search-and-pick menu: one by one
         return Answer(names or None)
     return Answer(", ".join(names) if names else None)
 
@@ -735,7 +735,17 @@ def how_heard(ctx, detail=False):
     options = ctx.field.get("options") or []
     if not options:
         return Answer(source)
-    labels = [option_label(o) for o in options]
+    # Nothing fits: the resolver asks which option.
+    return Answer(choose_source(source, [option_label(o) for o in options], detail) or source)
+
+
+_OTHER = re.compile(r"^others?\b|\bothers?$")
+
+
+def choose_source(source: str, labels: list[str], detail: bool = False) -> str | None:
+    """The option of ``labels`` meaning ``source``, or None when none does. Grouped options read as
+    "Group: Option" (optgroups, Workday's two-level menus); a group alone is not an answer, so under
+    "Job Board" only an option that is itself generic ("Other", "Other Job Board") stands for LinkedIn."""
     norms = [normalize(l) for l in labels]
     cats = source_categories(source)
     named = [i for i, n in enumerate(norms) if phrase_in(normalize(source), n) or (n and phrase_in(n, normalize(source)))]
@@ -743,16 +753,22 @@ def how_heard(ctx, detail=False):
         def rank(i):   # under the source's most likely category first ("Job Board: LinkedIn" before "Social Media: ...")
             hit = [k for k, c in enumerate(cats) if any(phrase_in(normalize(w), norms[i]) for w in CATEGORY_WORDS[c])]
             return (min(hit) if hit else len(cats), len(norms[i]))
-        return Answer(labels[min(named, key=rank)])
+        return labels[min(named, key=rank)]
     if not detail:
         for c in cats:   # first step of a two-level question: the category; its follow-up gets the name
             # The most specific wording wins: "Company Careers Page" over "Job Boards / Websites".
-            scored = [(max((len(w) for w in CATEGORY_WORDS[c] if phrase_in(normalize(w), n)), default=0), -i)
-                      for i, n in enumerate(norms)]
+            fit = lambda text: max((len(w) for w in CATEGORY_WORDS[c] if phrase_in(normalize(w), text)), default=0)
+            scored = []
+            for i, label in enumerate(labels):
+                group, _, option = label.rpartition(": ")
+                score = fit(normalize(option))
+                if not score and group and _OTHER.search(normalize(option)):
+                    score = fit(normalize(group))   # "Job Board: Other"
+                scored.append((score, -i))
             best, neg_i = max(scored)
             if best:
-                return Answer(labels[-neg_i])
-    return Answer(source)   # nothing fits: the resolver asks which option
+                return labels[-neg_i]
+    return None
 
 
 # Category options forms use, and the sources that belong to each.

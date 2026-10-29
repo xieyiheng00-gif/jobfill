@@ -52,7 +52,7 @@
     }
     return clean(el.getAttribute("aria-label"));
   };
-  const GENERIC = /^(attach|upload|choose( a)? file|browse|select( a)? file|drop files? here|add( a)? file|attach file|upload file)$/i;
+  const GENERIC = /^(attach|upload|choose( a)? files?|browse|select( a)? files?|drop files? here|add( a)? files?|attach files?|upload( a)? files?)$/i;
   const LABELISH = "label, legend, .application-label, [class*='label' i], [class*='question' i], [class*='title' i], h3, h4, h5, p, span, div";
   const CONTROL = "input:not([type=hidden]):not([type=submit]):not([type=button]), select, textarea";
   // Question text from the surrounding block, used for radio/checkbox groups and unlabeled
@@ -95,13 +95,15 @@
   const sectionOf = (el) => {
     for (let a = el.parentElement; a && a !== document.body; a = a.parentElement) {
       const cls = typeof a.className === "string" ? a.className : "";
-      const key = `${cls} ${a.id || ""} ${a.getAttribute("data-qa") || ""}`.toLowerCase();
+      // aria-labelledby: Workday's sections are role=group blocks labelled "Work-Experience-section" etc.
+      const key = `${cls} ${a.id || ""} ${a.getAttribute("data-qa") || ""} ${a.getAttribute("aria-labelledby") || ""}`.toLowerCase();
       if (/education/.test(key)) return "education";
       if (/work-?history|employment|experience-|-experience|experiences/.test(key)) return "experience";
       if (/references?\b/.test(key) && !/reference-?number/.test(key)) return "reference";
     }
     const idn = `${el.id} ${el.getAttribute("name") || ""}`.toLowerCase();
     if (/school|degree|discipline|education/.test(idn)) return "education";
+    if (/workexperience|work-?history|employment/.test(idn)) return "experience";
     return null;
   };
   // Smallest fieldset/group around a checkbox that holds several checkboxes and nothing else.
@@ -146,6 +148,14 @@
     return Array.from(box.querySelectorAll("[data-automation-id='selectedItem']"))
       .map((p) => clean((p.getAttribute("title") || p.innerText || "").replace(/[×✕]/g, ""))).filter(Boolean);
   };
+  // A file already taken by the site: uploaders like Workday's clear the input once the upload is done and
+  // list the file's name beside it instead.
+  const uploadedName = (el) => {
+    const box = el.closest("[data-automation-id^='formField'], [data-automation-id$='FileUpload' i]") || el.parentElement;
+    // innerText, not textOf(): the name may sit on a button (open / remove the file).
+    const m = box && clean(box.innerText).match(/(?:^|\s)([^\s\\/:*?"<>|]+\.(?:pdf|docx?|rtf|txt|odt|pages))\b/i);
+    return m ? m[1] : "";
+  };
   // React-Select shows the chosen option in a sibling element, not in the input itself.
   const comboValue = (el) => {
     let box = el.parentElement;
@@ -166,8 +176,25 @@
   const fields = [];
   const groups = new Map();
   const seen = new Map();
-  for (const el of root.querySelectorAll("input, select, textarea")) {
+  for (const el of root.querySelectorAll("input, select, textarea, button[aria-haspopup=listbox]")) {
     const t = el.tagName.toLowerCase();
+    // A "Select One" button that opens a list (Workday's single-choice dropdowns: How Did You Hear About
+    // Us?, Country, State, Phone Device Type). Its answer is the option clicked in that list, which the
+    // button then shows as its text; the 0x0 input next to it is only for the site's own validation.
+    if (t === "button") {
+      if (!shown(el) || el.disabled) continue;
+      if (!forLabel(el) && !el.closest("[data-automation-id^='formField'], fieldset, form")) continue;   // e.g. a language picker
+      const text = clean(el.innerText || el.textContent);
+      const aria = clean(el.getAttribute("aria-label"));
+      let label = directLabel(el);
+      if (!label || label === aria) label = blockLabel(el, [el]) || clean(text ? aria.split(text)[0] : aria);
+      if (!label) continue;
+      fields.push({ id: tag(el), kind: "dropdown", type: "dropdown", label, name: el.getAttribute("name") || "",
+                    html_id: el.id || "", section: sectionOf(el),
+                    required: required(el, label) || /\brequired\b/i.test(aria),
+                    value: /^(select( one)?|choose( one)?|please select|-+|)$/i.test(text) ? "" : text });
+      continue;
+    }
     let type = t === "input" ? (el.getAttribute("type") || "text").toLowerCase() : t;
     if (["hidden", "submit", "button", "reset", "image"].includes(type) || el.disabled) continue;
     // React-Select keeps an aria-hidden, tabindex=-1 input next to each dropdown for validation.
@@ -181,6 +208,8 @@
     const choice = type === "radio" || type === "checkbox";
     // The hidden input behind a toggle-button pair (Ashby yes/no) is read as the button group below.
     if (choice && el.parentElement && el.parentElement.querySelector(":scope > button[aria-pressed]")) continue;
+    // Likewise the 0x0 input beside a "Select One" button: the button is the question.
+    if (el.parentElement && el.parentElement.querySelector(":scope > button[aria-haspopup=listbox]")) continue;
     if (type !== "file") {
       const lab = forLabel(el) || el.closest("label");
       if (!(shown(el) || (choice && lab && shown(lab)))) continue;
@@ -212,12 +241,19 @@
     const role = (el.getAttribute("role") || "").toLowerCase();
     // Workday's prompt: a plain text input that only searches; the answer is a choice clicked in its
     // pop-up menu, shown afterwards as a pill while the box itself stays empty.
-    const selectInput = el.getAttribute("data-uxi-widget-type") === "selectinput";
+    const selectInput = el.getAttribute("data-uxi-widget-type") === "selectinput"
+      || (t === "input" && !!el.closest("[data-automation-id='multiSelectContainer'], [data-automation-id='multiselectInputContainer']"));
     const kind = type === "file" ? "file" : t === "select" ? "select" : t === "textarea" ? "textarea"
       : selectInput ? "selectinput" : role === "combobox" ? "combobox" : choice ? "checkbox" : "input";
     let label = directLabel(el);
     if (!label || (choice && label.length < 2) || (kind === "file" && GENERIC.test(label))) {
       label = blockLabel(el, [el]) || label;
+    }
+    if (kind === "file" && !/resume|cv|cover|transcript|portfolio|writing|sample/i.test(label)) {
+      // "Upload a file (5MB max)" says nothing about which file: Workday's section heading does ("Resume/CV").
+      const group = el.closest("[role=group][aria-labelledby]");
+      const head = group && textOf(byId(group.getAttribute("aria-labelledby")));
+      if (head) label = head;
     }
     if (!label) label = clean(el.getAttribute("placeholder")) || name || el.id;
     if (!label) continue;   // nothing a person could read either (e.g. Ashby's "autofill from resume" drop zone)
@@ -228,6 +264,7 @@
     const f = { id: tag(el), kind, type: kind === "input" ? type : kind, label, name, html_id: el.id || "",
                 required: required(el, label), section: sectionOf(el), placeholder: clean(el.getAttribute("placeholder")) };
     if (el.maxLength > 0 && el.maxLength < 100000) f.max_chars = el.maxLength;
+    if (role === "spinbutton") f.spin = true;   // Workday's date parts (Month / Year): typed key by key
     if (kind === "select") {
       f.multiple = el.multiple;
       // Options inside <optgroup> read as "Group: Option" (two "LinkedIn"s under "Job Board" and
@@ -248,7 +285,7 @@
     } else if (kind === "selectinput") {
       f.value = pillsOf(el).join(", ");   // judged by the pills, never by the (always empty) search box
     } else if (kind === "file") {
-      f.value = el.files && el.files.length ? el.files[0].name : "";
+      f.value = el.files && el.files.length ? el.files[0].name : uploadedName(el);
     } else {
       f.value = el.value || "";
     }

@@ -1,11 +1,19 @@
 <!doctype html>
-<html><head><meta charset="utf-8"><title>My Information - Visa Careers</title></head>
+<html><head><meta charset="utf-8"><title>My Information - Visa Careers</title>
+<style>
+  [data-automation-id=activeListContainer] { position: absolute; z-index: 10; width: 320px; background: #fff;
+                                             border: 1px solid #999; }
+</style></head>
 <body>
 <!-- A local stand-in for Workday's "How Did You Hear About Us?" prompt (data-uxi-widget-type=selectinput):
-     a plain text input that only searches (on Enter), a two-level pop-up menu of role=option entries,
-     and the choice shown as a selectedItem pill while the box stays empty. Like Workday, reopening the
-     menu returns to the level last shown. Flags: #nosearch (search finds nothing), #nomarks (categories
-     carry no chevron). -->
+     a plain text input that only searches (on Enter), a two-level pop-up menu of role=option entries added at
+     the end of the page (not inside the field), and the choice shown as a selectedItem pill while the box stays
+     empty. Like Workday, reopening the menu returns to the level last shown, a click outside closes it, and the
+     page has its own Back button. Flags: #nosearch (search finds nothing), #nomarks (categories carry no
+     chevron), #menu=social|posting|other (other companies' wording), #slow=<ms> (entries load late, behind a
+     spinner), #rebuild (the list is rebuilt right after it shows, detaching its entries), #stayopen (the menu
+     stays open after a pick, covering the next field). The page records window.picked ("Job Board > Other")
+     and window.pageBack. -->
 <div data-automation-id="formField-legalNameSection_firstName">
   <label for="name--first">Given Name(s)*</label><input id="name--first" type="text" data-automation-id="legalNameSection_firstName">
 </div>
@@ -16,18 +24,30 @@
     <input id="source--source" type="text" data-uxi-widget-type="selectinput" data-automation-id="searchBox"
            placeholder="Search" autocomplete="off">
   </div>
-  <div data-automation-id="activeListContainer" role="listbox" hidden></div>
 </div>
+<div data-automation-id="formField-legalNameSection_lastName">
+  <label for="name--last">Family Name*</label><input id="name--last" type="text" data-automation-id="legalNameSection_lastName">
+</div>
+<button type="button" data-automation-id="pageFooterBackButton" onclick="window.pageBack = true">Back</button>
+<div data-automation-id="activeListContainer" role="listbox" hidden></div>
 <script>
-const tree = [["Career Site", null], ["Conference", null],
-              ["Job Boards", ["12Twenty", "Glassdoor", "Indeed", "LinkedIn"]], ["Military Talent Program", null],
-              ["Other", null], ["University Career Fair", null], ["Visa Recruiter", null]];
+const trees = {
+  visa: [["Career Site", null], ["Conference", null],
+         ["Job Boards", ["12Twenty", "Glassdoor", "Indeed", "LinkedIn"]], ["Military Talent Program", null],
+         ["Other", null], ["University Career Fair", null], ["Visa Recruiter", null]],
+  social: [["Company Website", null], ["Employee Referral", null], ["Social Media", null], ["Other", null]],
+  posting: [["Career Site", null], ["Indeed", null], ["LinkedIn Job Posting", null], ["Other", null]],
+  other: [["Employee Referral", null], ["Job Board", ["Indeed", "Glassdoor", "Other"]], ["Other", null],
+          ["University", ["Career Fair", "Handshake"]]],
+};
 const flags = new URLSearchParams(location.hash.slice(1));
+const tree = trees[flags.get("menu") || "visa"];
+const slow = Number(flags.get("slow") || 0);
 const input = document.getElementById("source--source");
 const list = document.querySelector("[data-automation-id=activeListContainer]");
 const pills = document.querySelector("[data-automation-id=selectedItemList]");
-let level = null;
-window.picks = 0;
+let level = null, ticket = 0;
+window.picks = 0; window.picked = []; window.pageBack = false;
 const option = (text, branch, onClick) => {
   const d = document.createElement("div");
   d.setAttribute("role", "option"); d.setAttribute("data-automation-id", "promptOption");
@@ -37,22 +57,35 @@ const option = (text, branch, onClick) => {
   d.addEventListener("click", onClick);
   return d;
 };
-const render = (items, back) => {
-  list.innerHTML = "";
-  if (back) {
-    const b = document.createElement("div");
-    b.setAttribute("data-automation-id", "promptBackButton"); b.setAttribute("role", "button"); b.textContent = "Back";
-    b.addEventListener("click", showTop);
-    list.appendChild(b);
-  }
-  if (!items.length) list.insertAdjacentHTML("beforeend", "<div>No Items.</div>");
-  items.forEach((i) => list.appendChild(i));
+// make() builds fresh entries each time: a rebuild leaves nothing of the old list attached.
+const render = (make, back) => {
+  const mine = ++ticket;
+  const paint = () => {
+    if (mine !== ticket || list.hidden) return;
+    list.innerHTML = "";
+    if (back) {
+      const b = document.createElement("div");
+      b.setAttribute("data-automation-id", "promptBackButton"); b.setAttribute("role", "button"); b.textContent = "Back";
+      b.addEventListener("click", showTop);
+      list.appendChild(b);
+    }
+    const items = make();
+    if (!items.length) list.insertAdjacentHTML("beforeend", "<div>No Items.</div>");
+    items.forEach((i) => list.appendChild(i));
+  };
+  const r = input.getBoundingClientRect();   // under the field, over whatever follows it
+  list.style.top = `${r.bottom + scrollY}px`; list.style.left = `${r.left + scrollX}px`;
   list.hidden = false;
+  if (slow) {
+    list.innerHTML = '<div data-automation-id="loadingIndicator">Loading</div>';
+    setTimeout(paint, slow);
+  } else paint();
+  if (flags.has("rebuild")) setTimeout(paint, slow + 450);   // about when a script clicks what it found
 };
-function showTop() { level = null; render(tree.map(([t, kids]) => option(t, !!kids, () => kids ? showLevel(t) : pick(t)))); }
+function showTop() { level = null; render(() => tree.map(([t, kids]) => option(t, !!kids, () => kids ? showLevel(t) : pick(t)))); }
 function showLevel(t) {
   level = t;
-  render(tree.find(([n]) => n === t)[1].map((k) => option(k, false, () => pick(k))), true);
+  render(() => tree.find(([n]) => n === t)[1].map((k) => option(k, false, () => pick(k))), true);
 }
 function pick(text) {
   const p = document.createElement("div");
@@ -61,8 +94,9 @@ function pick(text) {
   p.querySelector("[data-automation-id=DELETE_charm]").addEventListener("click", () => p.remove());
   pills.appendChild(p);
   input.value = "";
-  list.hidden = true;
+  if (!flags.has("stayopen")) list.hidden = true;
   window.picks += 1;
+  window.picked.push(level ? `${level} > ${text}` : text);
 }
 input.addEventListener("click", () => { if (list.hidden) (level ? showLevel(level) : showTop()); });
 input.addEventListener("keydown", (e) => {
@@ -72,7 +106,11 @@ input.addEventListener("keydown", (e) => {
   const q = input.value.trim().toLowerCase();
   const leaves = tree.flatMap(([t, kids]) => kids ? kids : [t]);
   const hits = flags.has("nosearch") ? [] : leaves.filter((l) => l.toLowerCase().includes(q));
-  render(hits.map((h) => option(h, false, () => pick(h))));
+  level = null;
+  render(() => hits.map((h) => option(h, false, () => pick(h))));
+});
+document.addEventListener("mousedown", (e) => {   // a click outside closes the menu
+  if (!list.hidden && !list.contains(e.target) && e.target !== input) list.hidden = true;
 });
 </script>
 </body></html>

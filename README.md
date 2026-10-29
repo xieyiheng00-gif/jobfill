@@ -84,7 +84,7 @@ python -m playwright install chromium
 | System | Who fills | Notes |
 |---|---|---|
 | Greenhouse, Lever, iCIMS, Ashby | jobfill's Playwright filler (`apply fill`) | visible Chromium window that stays open; React dropdowns, autocompletes, radio/checkbox groups, yes/no toggle buttons, resume upload; re-reads the form for follow-up questions; iCIMS email step and multi-page `apply next` |
-| Workday | `jobfill login` (you run it), then the Playwright filler | Apply → Apply Manually → sign in / create account; multi-page `apply next`; search-and-pick menus, including two-level ones (Job Boards → LinkedIn), read by their pills |
+| Workday | `jobfill login` (you run it), then the Playwright filler | Apply → Apply Manually → sign in / create account; multi-page `apply next`; search-and-pick menus, including two-level ones (Job Boards → LinkedIn), read by their pills; "Select One" dropdowns |
 | Company portals (Amazon, TikTok, Google, ...) and other ATSs (SmartRecruiters, Workable, ...) | the agent in the built-in browser; portals that need an account use the jobfill window (`--ats generic`) so the login carries over | answers still come from `jobfill resolve` |
 | LinkedIn / Indeed listings | the agent follows the employer's apply link first | |
 

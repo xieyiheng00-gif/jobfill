@@ -9,7 +9,8 @@ from __future__ import annotations
 
 import re
 
-from ..text import normalize
+from ..derive import choose_source
+from ..text import normalize, phrase_in
 
 CONFIRMATION = re.compile(r"(thank you|thanks) for (applying|your application|your interest)|application (has been |was )?"
                           r"(received|submitted)|we('ve| have) received your application|successfully submitted", re.I)
@@ -63,10 +64,16 @@ class Adapter:
 
     def custom_fill(self, frame, field: dict, value):
         """Take over a widget this system renders specially; None means use the generic filler."""
+        if field.get("kind") == "selectinput":   # Workday's prompt, also on a portal opened as generic
+            return fill_selectinput(frame, field, value)
         return None
 
     def after_upload(self, frame) -> None:
         frame.wait_for_timeout(1000)
+
+    def expand(self, frame, store, dry_run: bool = False) -> list[str]:
+        """Open repeating blocks ("Add" under Work Experience) so every stored entry has one. Returns notes."""
+        return []
 
     def _buttons(self, frame):
         return frame.locator("button:visible, input[type=submit]:visible, input[type=button]:visible, "
@@ -187,8 +194,17 @@ class Ashby(Adapter):
         frame.wait_for_timeout(1500)
 
 
-# ---- Workday prompt ("selectinput"): a search box with a pop-up menu; only a clicked choice counts,
-# and it then shows as a pill while the box stays empty. Menus can be two levels (category -> choice).
+# ---- Workday prompt ("selectinput"), e.g. "How Did You Hear About Us?". It looks like a dropdown but is a
+# search box with a pop-up menu, and treating it as a form field fails in several ways:
+# - typing only searches: a choice counts once it is clicked, and then shows as a pill (the box stays empty);
+# - the menu is added at the end of the page, not inside the field: entries are read page-wide;
+# - menus nest (Job Board -> LinkedIn) and every click rebuilds the list: entries are re-read and re-tagged
+#   right before each click, never held across one;
+# - entries load late: they count once present, not loading, and the same on two reads in a row;
+# - one text can be the category, the choice and the pill: pills are skipped and clicks go by tag;
+# - the menu stays open after a pick and covers the next field: it is closed after every field;
+# - every company words its choices its own way: when the search finds nothing, the whole menu is read and
+#   matched like any option list ("LinkedIn Job Posting", "Social Media", "Job Board > Other").
 
 PILLS_JS = r"""(id) => {
   const el = document.querySelector(`[data-jobfill-id="${id}"]`);
@@ -197,20 +213,48 @@ PILLS_JS = r"""(id) => {
     .map((p) => (p.getAttribute("title") || p.innerText || "").replace(/[×✕]/g, "").replace(/\s+/g, " ").trim()).filter(Boolean);
 }"""
 
-# Visible menu entries (not the pills), tagged data-jobfill-opt=<n>. ``branch`` marks a category that
-# opens a sub-level (chevron / aria-haspopup); ``marked`` says whether this menu marks categories at all.
+# The open menu: its visible entries (not the pills), tagged data-jobfill-opt=<n>; whether it is still loading
+# or says it has nothing. ``branch`` marks a category that opens a sub-level (chevron / aria-haspopup).
 MENU_JS = r"""() => {
   const shown = (e) => e.getClientRects().length > 0 && getComputedStyle(e).visibility !== "hidden";
+  const pill = "[data-automation-id='selectedItem'], [data-automation-id='selectedItemList']";
   let items = Array.from(document.querySelectorAll("[role=option], [data-automation-id=promptOption]"))
-    .filter((o) => shown(o) && !o.closest("[data-automation-id='selectedItem'], [data-automation-id='selectedItemList']"));
+    .filter((o) => shown(o) && !o.closest(pill));
   items = items.filter((o) => !items.some((p) => p !== o && p.contains(o)));
   document.querySelectorAll("[data-jobfill-opt]").forEach((o) => o.removeAttribute("data-jobfill-opt"));
-  return items.map((o, i) => {
-    o.setAttribute("data-jobfill-opt", String(i));
-    const branch = !!o.querySelector("[data-automation-id*='chevron' i], [data-automation-id*='arrow' i], [class*='chevron' i]")
-      || o.getAttribute("aria-haspopup") === "true" || o.hasAttribute("aria-expanded");
-    return {text: (o.getAttribute("data-automation-label") || o.innerText || "").replace(/\s+/g, " ").trim(), branch};
-  });
+  const lists = Array.from(document.querySelectorAll("[role=listbox], [data-automation-id=activeListContainer]"))
+    .filter((l) => shown(l) && !l.closest(pill));
+  return {
+    items: items.map((o, i) => {
+      o.setAttribute("data-jobfill-opt", String(i));
+      const branch = !!o.querySelector("[data-automation-id*='chevron' i], [data-automation-id*='arrow' i], [class*='chevron' i]")
+        || o.getAttribute("aria-haspopup") === "true" || o.hasAttribute("aria-expanded");
+      return {text: (o.getAttribute("data-automation-label") || o.innerText || "").replace(/\s+/g, " ").trim(), branch};
+    }),
+    busy: lists.some((l) => l.getAttribute("aria-busy") === "true"
+      || Array.from(l.querySelectorAll("[data-automation-id*='loading' i], [role=progressbar]")).some(shown)),
+    empty: !items.length && lists.some((l) => /no (items|results|matches)/i.test(l.innerText || "")),
+    open: items.length > 0 || lists.length > 0,
+  };
+}"""
+
+# The menu's own Back (up one level), tagged data-jobfill-back. Looked for only around the open menu: the
+# page's Back button would leave the page.
+BACK_JS = r"""() => {
+  const shown = (e) => e.getClientRects().length > 0 && getComputedStyle(e).visibility !== "hidden";
+  document.querySelectorAll("[data-jobfill-back]").forEach((b) => b.removeAttribute("data-jobfill-back"));
+  const anchor = Array.from(document.querySelectorAll("[data-jobfill-opt], [role=listbox], [data-automation-id=activeListContainer]")).find(shown);
+  if (!anchor) return false;
+  let box = anchor;
+  for (let up = 0; up < 3 && box.parentElement && box.parentElement !== document.body; up++) box = box.parentElement;
+  const back = Array.from(box.querySelectorAll("[data-automation-id*='back' i], [aria-label*='back' i], [role=button], button"))
+    .find((b) => {
+      const id = b.getAttribute("data-automation-id") || "";
+      return shown(b) && !b.querySelector("[role=option]") && !/navigation|footer|page/i.test(id)
+        && (/back/i.test(id) || /^\s*(go )?back\b/i.test(b.getAttribute("aria-label") || b.innerText || ""));
+    });
+  if (back) back.setAttribute("data-jobfill-back", "1");
+  return !!back;
 }"""
 
 REMOVE_PILL_JS = r"""([id, text]) => {
@@ -224,116 +268,219 @@ REMOVE_PILL_JS = r"""([id, text]) => {
   return !!x;
 }"""
 
+# A click on the page outside the menu, which is what closes Workday's pop-ups.
+OUTSIDE_CLICK_JS = r"""() => ["mousedown", "mouseup", "click"].forEach((t) =>
+  document.body.dispatchEvent(new MouseEvent(t, {bubbles: true, cancelable: true})))"""
+
+HOW_HEARD = ("how_heard", "how_heard_detail")
+
 
 def _same(a: str, b: str) -> bool:
     return normalize(a) == normalize(b)
 
 
-def _pick(items: list[dict], want: str) -> int | None:
-    """The menu entry meaning ``want``: exact, then 'Job Boards > LinkedIn'-style suffix, then prefix."""
+def _is(text: str, want: str) -> bool:
+    """``text`` is ``want`` with at most a qualifier Workday adds: "Job Boards > LinkedIn",
+    "United States of America (+1)", "Python (Programming Language)". A shared word is not enough:
+    SQL is not "Interactive SQL", Docker is not "Docker - Micron"."""
     w = normalize(want)
-    norms = [normalize(i["text"]) for i in items]
-    for test in (lambda n: n == w, lambda n: n.endswith(" " + w), lambda n: n.startswith(w + " ")):
-        hits = [k for k, n in enumerate(norms) if n and test(n)]
-        if hits:
-            return hits[0]
+    if normalize(re.split(r"\s+>\s+|:\s+", text)[-1]) == w:
+        return True
+    m = re.match(r"^(.*?)\s*\(([^()]*)\)\s*$", text)
+    return bool(m) and w in (normalize(m.group(1)), normalize(m.group(2)))
+
+
+def _pick(items: list[dict], want: str, question_id: str | None = None) -> int | None:
+    """The menu entry that is ``want``: the same text first, then a qualified form of it (``_is``). For "How
+    did you hear", an entry naming the source counts too ("LinkedIn Job Posting")."""
+    texts = [i["text"] for i in items]
+    for test in (lambda t: _same(t, want), lambda t: _is(t, want),
+                 lambda t: question_id in HOW_HEARD and bool(normalize(t))
+                 and (phrase_in(normalize(want), normalize(t)) or phrase_in(normalize(t), normalize(want)))):
+        hit = next((k for k, t in enumerate(texts) if test(t)), None)
+        if hit is not None:
+            return hit
     return None
 
 
+def _choose(want: str, entries: list[tuple[str, str]], question_id: str | None) -> tuple[str, str] | None:
+    """The (category, choice) meaning ``want`` among every entry of the menu."""
+    labels = {(f"{group}: {text}" if group else text): (group, text) for group, text in entries}
+    if question_id in HOW_HEARD:   # by category: "Job Board: LinkedIn" first, else "Social Media", "Job Board: Other"
+        hit = choose_source(want, list(labels), detail=question_id == "how_heard_detail")
+    else:
+        k = _pick([{"text": t} for _, t in entries], want)
+        hit = list(labels)[k] if k is not None else None
+    return labels.get(hit) if hit else None
+
+
+def _read(frame) -> dict:
+    return frame.evaluate(MENU_JS)
+
+
 def _menu(frame, before: list[dict] | None = None, wait_ms: int = 4000) -> list[dict]:
-    """Menu entries once they appear (or change from ``before``, e.g. after search or drill-down)."""
-    items: list[dict] = []
-    for _ in range(max(1, wait_ms // 200)):
+    """Menu entries once they have loaded, or changed from ``before`` (after a search or a drill-down): present
+    (or "No Items"), not loading, and the same on two reads in a row. Else what shows when the time is up."""
+    last = None
+    for _ in range(max(2, wait_ms // 200)):
         frame.wait_for_timeout(200)
-        items = frame.evaluate(MENU_JS)
-        if items and items != before:
-            break
-    return items
+        m = _read(frame)
+        now = None if m["busy"] or not (m["items"] or m["empty"]) else m["items"]
+        if now is not None and now != before and now == last:
+            return now
+        last = now
+    return _read(frame)["items"]
 
 
-BACK = "[data-automation-id*='back' i]:visible, [aria-label*='back' i]:visible"
+def _click_entry(frame, text: str) -> bool:
+    """Click the entry reading ``text``. The menu is read again first and after a miss: Workday rebuilds it as
+    it loads, so an element found a moment ago may be detached by the time it is clicked."""
+    for _ in range(3):
+        items = _read(frame)["items"]
+        k = next((n for n, i in enumerate(items) if i["text"] == text), None)
+        if k is not None:
+            try:
+                frame.locator(f'[data-jobfill-opt="{k}"]').click(timeout=2000)
+                return True
+            except Exception:
+                pass
+        frame.wait_for_timeout(300)
+    return False
 
 
 def _to_top(frame, items: list[dict]) -> list[dict]:
     """Workday reopens the menu at the level last shown: step back up to the top level."""
     for _ in range(3):
-        back = frame.locator(BACK).first
-        if not back.count():
+        if not frame.evaluate(BACK_JS):
             break
-        back.click()
+        try:
+            frame.locator("[data-jobfill-back]").first.click(timeout=2000)
+        except Exception:
+            break
         items = _menu(frame, before=items, wait_ms=1500)
     return items
+
+
+def _open_top(frame, loc) -> list[dict]:
+    """Open the menu afresh at its top level: no search text, no category open."""
+    loc.press("Escape")
+    loc.fill("")
+    loc.click()
+    return _to_top(frame, _menu(frame))
+
+
+def _at_top(frame, loc, top: list[dict]) -> list[dict]:
+    now = _read(frame)["items"]
+    if now != top:
+        now = _to_top(frame, now)
+    return now if now == top else _open_top(frame, loc)
+
+
+def _close_menu(frame, loc) -> None:
+    """Close the pop-up: Workday leaves it open after a pick, and it then covers the next field."""
+    for step in (lambda: loc.press("Escape"), lambda: frame.evaluate(OUTSIDE_CLICK_JS), lambda: loc.press("Tab")):
+        try:
+            if not _read(frame)["open"]:
+                return
+            step()
+        except Exception:
+            return
+        frame.wait_for_timeout(300)
+
+
+def _search(frame, loc, want: str, picked, question_id: str | None = None) -> bool:
+    """Type ``want`` and press Enter (Workday then searches every level), and click the result meaning it."""
+    loc.press("Escape")
+    loc.fill("")
+    loc.click()
+    shown = _menu(frame, wait_ms=1500)   # what the click opened, to tell the results apart from it
+    loc.type(want, delay=20)
+    loc.press("Enter")
+    found = _menu(frame, before=shown)
+    k = _pick(found, want, question_id)
+    return k is not None and _click_entry(frame, found[k]["text"]) and picked(found[k]["text"])
+
+
+def _browse(frame, loc, field_id: str, want: str, start: list[str], pills,
+            question_id: str | None = None) -> list[tuple[str, str]]:
+    """Every choice of the menu as (category, choice), opening each category (Job Boards -> LinkedIn). In a
+    menu that does not mark its categories an entry is opened to find out; if it was a plain choice, that
+    selected it, and it is removed again. Not needed when ``want`` is right there at the top level."""
+    top = _open_top(frame, loc)
+    marked = any(i["branch"] for i in top)
+    if not marked and _pick(top, want, question_id) is not None:
+        return [("", i["text"]) for i in top]
+    entries: list[tuple[str, str]] = []
+    for entry in top:
+        if marked and not entry["branch"]:
+            entries.append(("", entry["text"]))
+            continue
+        now = _at_top(frame, loc, top)
+        if not _click_entry(frame, entry["text"]):
+            continue
+        frame.wait_for_timeout(500)
+        added = [p for p in pills() if p not in start]
+        if added:
+            for p in added:
+                frame.evaluate(REMOVE_PILL_JS, [field_id, p])
+                frame.wait_for_timeout(300)
+            entries.append(("", entry["text"]))
+            continue
+        sub = _menu(frame, before=now, wait_ms=2000)
+        if sub != now:
+            entries += [(entry["text"], i["text"]) for i in sub if i["text"] != entry["text"]]
+    return entries
+
+
+def _pick_path(frame, loc, path: tuple[str, str], picked) -> bool:
+    group, text = path
+    now = _open_top(frame, loc)
+    if group:
+        if not _click_entry(frame, group):
+            return False
+        _menu(frame, before=now, wait_ms=2000)
+    return _click_entry(frame, text) and picked(text)
 
 
 def fill_selectinput(frame, field: dict, value) -> tuple[bool, str]:
     loc = frame.locator(f'[data-jobfill-id="{field["id"]}"]')
     pills = lambda: frame.evaluate(PILLS_JS, field["id"])
-    for want in (value if isinstance(value, list) else [value]):
-        want = str(want)
-        if any(_same(p, want) for p in pills()):
-            continue   # already chosen
-        start = pills()
-
-        # 1. Search: Workday searches every level once Enter is pressed.
-        loc.click()
-        loc.fill("")
-        loc.type(want, delay=20)
-        loc.press("Enter")
-        found = _menu(frame)
-        k = _pick(found, want)
-        if k is not None:
-            frame.locator(f'[data-jobfill-opt="{k}"]').click()
-            frame.wait_for_timeout(500)
+    qid = field.get("question_id")
+    values = value if isinstance(value, list) else [value]
+    lacking: list[str] = []   # entries of a list (skills) the menu has no exact choice for
+    try:
+        for want in values:
+            want = str(want)
             if any(_same(p, want) for p in pills()):
-                continue
+                continue   # already chosen
+            start = pills()
 
-        # 2. Browse: open each category and look inside (Job Boards -> LinkedIn).
-        loc.press("Escape")
-        loc.fill("")
-        seen: list[str] = []
-        loc.click()
-        top = _to_top(frame, _menu(frame))
-        marked = any(i["branch"] for i in top)
-        done = False
-        for entry in top:
-            seen.append(entry["text"])
-            if marked and not entry["branch"] and not _same(entry["text"], want):
-                continue   # a plain choice, not a category: clicking it would select it
-            if frame.evaluate(MENU_JS) != top:   # back to the top level for every category
-                _to_top(frame, frame.evaluate(MENU_JS))
-                if frame.evaluate(MENU_JS) != top:
-                    loc.press("Escape")
-                    loc.click()
-                    _to_top(frame, _menu(frame))
-            now = frame.evaluate(MENU_JS)
-            k = next((n for n, i in enumerate(now) if i["text"] == entry["text"]), None)
-            if k is None:
-                continue
-            frame.locator(f'[data-jobfill-opt="{k}"]').click()
-            frame.wait_for_timeout(500)
-            added = [p for p in pills() if p not in start]
-            if any(_same(p, want) for p in added):
-                done = True
-                break
-            for p in added:   # it was a plain choice after all (menu without category marks): undo it
-                frame.evaluate(REMOVE_PILL_JS, [field["id"], p])
-                frame.wait_for_timeout(300)
-            if added:
-                continue
-            sub = _menu(frame, before=now, wait_ms=2000)
-            if sub == now:
-                continue
-            seen += [f"{entry['text']} > {i['text']}" for i in sub if i["text"] != entry["text"]]
-            k = _pick(sub, want)
-            if k is not None:
-                frame.locator(f'[data-jobfill-opt="{k}"]').click()
+            def picked(text):   # a new pill for ``text`` ("LinkedIn", or "Job Boards LinkedIn")
                 frame.wait_for_timeout(500)
-                done = any(_same(p, want) for p in pills())
-                break
-        if not done:
-            loc.press("Escape")
-            return False, f"no menu choice matches {want!r}; it offers: {seen[:40]}"
-    return True, ""
+                t = normalize(text)
+                return any(normalize(p) == t or normalize(p).endswith(" " + t) for p in pills() if p not in start)
+
+            # 1. Search, then 2. read the whole menu and pick what means the same. A list (skills) is only
+            # searched: its menu is a catalogue of thousands, and a look-alike entry is a wrong answer.
+            if _search(frame, loc, want, picked, qid):
+                continue
+            if len(values) > 1:
+                lacking.append(want)
+                continue
+            entries = _browse(frame, loc, field["id"], want, start, pills, qid)
+            path = _choose(want, entries, qid)
+            if path is None:
+                offers = [f"{group} > {text}" if group else text for group, text in entries]
+                return False, f"no menu choice matches {want!r}; it offers: {offers[:40]}"
+            if any(_same(p, path[1]) for p in pills()):
+                continue   # what it stands for is already chosen
+            if not _pick_path(frame, loc, path, picked):
+                return False, f"could not pick {' > '.join(p for p in path if p)!r} in the menu"
+        if lacking and len(lacking) == len(values):
+            return False, f"the menu has no exact entry for any of {lacking}"
+        return True, f"left out (no exact entry in the menu): {', '.join(lacking)}" if lacking else ""
+    finally:
+        _close_menu(frame, loc)
 
 
 class Workday(Adapter):
@@ -359,10 +506,48 @@ class Workday(Adapter):
         page.wait_for_timeout(1500)
         self.wait_ready(page)
 
-    def custom_fill(self, frame, field: dict, value):
-        if field.get("kind") == "selectinput":
-            return fill_selectinput(frame, field, value)
-        return None
+    # Repeating sections and the stored entries that fill them, one block ("Work Experience 1") per entry.
+    SECTIONS = {"Work-Experience-section": "experience", "Education-section": "education"}
+
+    def expand(self, frame, store, dry_run: bool = False) -> list[str]:
+        """Click "Add" / "Add Another" until each section has a block per stored entry. Blocks already there
+        (blank or not) count; none is ever deleted."""
+        notes = []
+        for section, kind in self.SECTIONS.items():
+            group = frame.locator(f'[role=group][aria-labelledby="{section}"]')
+            if not group.count():
+                continue
+            name = section.removesuffix("-section").replace("-", " ")
+            blocks = lambda: group.locator("h5[id$='-panel'], h4[id$='-panel']").count()
+            want, have = len(store.records(kind)), blocks()
+            if want <= have:
+                continue
+            if dry_run:
+                notes.append(f"would add {want - have} {name} block(s) for the stored entries")
+                continue
+            for _ in range(want - have):
+                before = blocks()
+                group.locator("[data-automation-id=add-button]").last.click(timeout=5000)
+                for _ in range(25):   # the new block renders a moment after the click
+                    frame.wait_for_timeout(200)
+                    if blocks() > before:
+                        break
+                else:
+                    notes.append(f"{name}: clicking Add did not open a new block")
+                    break
+            notes.append(f"{name}: {blocks() - have} block(s) added, {blocks()} for {want} stored entries")
+        return notes
+
+    def after_upload(self, frame) -> None:
+        # The file shows in the list beside the drop zone once Workday has taken it (the input is cleared).
+        for _ in range(60):
+            frame.wait_for_timeout(250)
+            if frame.locator("[data-automation-id*='file-upload-item' i], [data-automation-id*='successful' i]").count():
+                break
+            text = frame.locator("[data-automation-id$='FileUpload']").first
+            if text.count() and re.search(r"\.(pdf|docx?|rtf|txt|odt)\b", text.inner_text(), re.I):
+                break
+        frame.wait_for_timeout(500)
 
     def next_button(self, frame):
         nxt = frame.locator("[data-automation-id=bottom-navigation-next-button]:visible").first

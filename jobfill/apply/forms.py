@@ -36,7 +36,59 @@ OPTIONS_JS = r"""(id) => {
 }"""
 
 NOT_AN_OPTION = re.compile(r"^(no options?|no results?( found)?|loading\.*|type to search|start typing|searching\.*|"
-                           r"no matches( found)?)$", re.I)
+                           r"no matches( found)?|select one|choose one|please select)$", re.I)
+
+# The list a "Select One" button opens (aria-controls, else the visible listbox): every enabled option's
+# text, scrolling through a long list in case it only renders the rows in view. null while it is not open.
+LIST_JS = r"""async (id) => {
+  const el = document.querySelector(`[data-jobfill-id="${id}"]`);
+  const shown = (n) => n && n.getClientRects().length > 0 && getComputedStyle(n).visibility !== "hidden";
+  const clean = (s) => (s || "").replace(/\s+/g, " ").trim();
+  const ref = el && el.getAttribute("aria-controls");
+  const list = (ref && document.getElementById(ref)) || Array.from(document.querySelectorAll("[role=listbox]")).find(shown);
+  if (!shown(list)) return null;
+  const read = () => Array.from(list.querySelectorAll("[role=option]"))
+    .filter((o) => o.getAttribute("aria-disabled") !== "true").map((o) => clean(o.innerText || o.textContent)).filter(Boolean);
+  const out = read();
+  const start = list.scrollTop;
+  for (let i = 0; i < 60 && list.scrollTop + list.clientHeight < list.scrollHeight - 1; i++) {
+    list.scrollTop += list.clientHeight;
+    await new Promise((r) => setTimeout(r, 100));
+    for (const t of read()) if (!out.includes(t)) out.push(t);
+  }
+  list.scrollTop = start;
+  return out;
+}"""
+
+# Find the option reading ``text`` in that list (scrolling until it is rendered), bring it into view and tag it
+# data-jobfill-opt="pick" for the click.
+MARK_JS = r"""async ([id, text]) => {
+  const el = document.querySelector(`[data-jobfill-id="${id}"]`);
+  const shown = (n) => n && n.getClientRects().length > 0 && getComputedStyle(n).visibility !== "hidden";
+  const clean = (s) => (s || "").replace(/\s+/g, " ").trim();
+  const ref = el && el.getAttribute("aria-controls");
+  const list = (ref && document.getElementById(ref)) || Array.from(document.querySelectorAll("[role=listbox]")).find(shown);
+  if (!shown(list)) return false;
+  document.querySelectorAll("[data-jobfill-opt]").forEach((o) => o.removeAttribute("data-jobfill-opt"));
+  const pause = () => new Promise((r) => setTimeout(r, 120));
+  const find = () => Array.from(list.querySelectorAll("[role=option]")).find((o) => clean(o.innerText || o.textContent) === text);
+  list.scrollTop = 0;
+  await pause();
+  for (let i = 0; i < 60; i++) {
+    const hit = find();
+    if (hit) {
+      hit.scrollIntoView({block: "nearest"});
+      await pause();
+      const now = find();   // a list that renders only the rows in view redraws them on that scroll
+      if (now) { now.setAttribute("data-jobfill-opt", "pick"); return true; }
+      continue;
+    }
+    if (list.scrollTop + list.clientHeight >= list.scrollHeight - 1) return false;
+    list.scrollTop += list.clientHeight;
+    await pause();
+  }
+  return false;
+}"""
 
 INPUT_TYPES = {"text": "text", "email": "email", "tel": "tel", "url": "url", "number": "number", "date": "date",
                "search": "text", "month": "text", "password": "password"}
@@ -46,13 +98,20 @@ def sel(field_id: str) -> str:
     return f'[data-jobfill-id="{field_id.removeprefix("g-")}"]'
 
 
-def extract(frame, root_selector: str | None = None, read_options: bool = True) -> list[dict]:
+def extract(frame, root_selector: str | None = None, read_options: bool = True,
+            known: set[str] | None = None) -> list[dict]:
+    """Every field on the page. ``read_options`` opens dropdowns whose options only exist while open
+    (comboboxes, "Select One" buttons), except the ``known`` ones, already read in an earlier pass."""
     fields = frame.evaluate(EXTRACT_JS, root_selector)
     fields = [f for f in fields if f.get("type") != "password"]
     if read_options:
         for f in fields:
-            if f["kind"] == "combobox" and not f.get("options"):
+            if f.get("options") or f["id"] in (known or ()):
+                continue
+            if f["kind"] == "combobox":
                 f["options"] = combobox_options(frame, f["id"])
+            elif f["kind"] == "dropdown":
+                f["options"] = dropdown_options(frame, f)
     return fields
 
 
@@ -76,13 +135,58 @@ def combobox_options(frame, field_id: str) -> list[str]:
     return out
 
 
+def _list_options(frame, field_id: str, wait_ms: int = 3000) -> list[str]:
+    """The open list's options, once it shows some (the site may fill it a moment after it opens)."""
+    for _ in range(max(1, wait_ms // 200)):
+        texts = frame.evaluate(LIST_JS, field_id)
+        texts = [t for t in (texts or []) if not NOT_AN_OPTION.match(t)]
+        if texts:
+            return list(dict.fromkeys(texts))
+        frame.wait_for_timeout(200)
+    return []
+
+
+def _button(frame, f: dict):
+    """The dropdown's button; found again by its id if the site re-rendered it (losing jobfill's tag)."""
+    loc = frame.locator(sel(f["id"]))
+    if not loc.count() and f.get("html_id"):
+        loc = frame.locator(f'[id="{f["html_id"]}"]')
+    return loc.first
+
+
+def _close_list(frame, f: dict) -> None:
+    """Close the list (left open, it covers the next field): Escape, else the button again."""
+    for close in ("Escape", "click"):
+        button = _button(frame, f)
+        if button.get_attribute("aria-expanded") != "true":
+            return
+        if close == "Escape":
+            button.press("Escape")
+        else:
+            button.click(timeout=3000)
+        frame.wait_for_timeout(250)
+
+
+def dropdown_options(frame, f: dict) -> list[str]:
+    """Open a "Select One" button's list, read its options, and close it again without choosing."""
+    try:
+        button = _button(frame, f)
+        if button.get_attribute("aria-expanded") != "true":
+            button.click(timeout=3000)
+        opts = _list_options(frame, f["id"])
+        _close_list(frame, f)
+        return opts
+    except Exception:
+        return []
+
+
 def to_resolver_field(f: dict) -> dict:
     kind = f["kind"]
     if kind == "input":
         rtype = INPUT_TYPES.get(f["type"], "text")
     elif kind == "select":
         rtype = "multiselect" if f.get("multiple") else "select"
-    elif kind == "combobox":
+    elif kind in ("combobox", "dropdown"):
         rtype = "select" if f.get("options") else "text"
     elif kind == "selectinput":
         rtype = "text"    # the plain answer ("LinkedIn"); the adapter finds it in the menu, at any level
@@ -91,6 +195,8 @@ def to_resolver_field(f: dict) -> dict:
     else:
         rtype = kind  # textarea, radio, checkbox, file
     out = {"id": f["id"], "label": f["label"], "type": rtype, "required": bool(f.get("required"))}
+    if kind == "selectinput":
+        out["picks"] = True   # a list answer (skills) stays a list: each entry is searched and picked on its own
     if f.get("options") and kind != "input":
         out["options"] = f["options"]
     for k in ("max_chars", "section", "index", "placeholder"):
@@ -154,6 +260,47 @@ def _fill_combobox(frame, loc, field_id: str, value) -> tuple[bool, str]:
             loc.press("Enter")
         frame.wait_for_timeout(150)
     return True, ""
+
+
+def _fill_dropdown(frame, f: dict, value) -> tuple[bool, str]:
+    """Pick ``value`` in a "Select One" button's list: open it, click the option, and check that the button
+    now shows it (only then has the site taken the choice)."""
+    want = str(value[0] if isinstance(value, list) and value else value)
+    shows = lambda: _button(frame, f).inner_text().strip()
+    if normalize(shows()) == normalize(want):
+        return True, ""
+    try:
+        button = _button(frame, f)
+        if button.get_attribute("aria-expanded") != "true":
+            button.click(timeout=5000)
+        texts = _list_options(frame, f["id"])
+        if not texts:
+            return False, "its list did not open"
+        i = _best_option(texts, want)
+        if i is None:
+            return False, f"no option matches {want!r} (it offers {texts[:15]})"
+        target = texts[i]
+        # The list is rebuilt as it loads: find the option again right before each click.
+        for _ in range(3):
+            if frame.evaluate(MARK_JS, [f["id"], target]):
+                try:
+                    frame.locator('[data-jobfill-opt="pick"]').click(timeout=2000)
+                    break
+                except Exception:
+                    pass
+            frame.wait_for_timeout(300)
+        else:
+            return False, f"could not click {target!r} in its list"
+        for _ in range(15):
+            frame.wait_for_timeout(200)
+            if normalize(shows()) == normalize(target):
+                return True, ""
+        return False, f"clicked {target!r}, but the field still shows {shows()!r}"
+    finally:
+        try:
+            _close_list(frame, f)
+        except Exception:
+            pass
 
 
 def _click_choice(frame, ref: str) -> bool:
@@ -224,6 +371,19 @@ def fill(frame, f: dict, value, *, root: Path, after=None, custom=None) -> tuple
                     return False, "could not tick the box"
         elif kind == "combobox":
             ok, note = _fill_combobox(frame, loc, f["id"], value)
+            if not ok:
+                return ok, note
+        elif f.get("spin"):
+            # A spin button (Workday's Month / Year) takes typed keys; a value set from outside is reset.
+            loc.click(timeout=5000)
+            loc.press("Control+A")
+            loc.type(str(value), delay=60)
+            frame.wait_for_timeout(150)
+            got = loc.input_value()
+            if got.lstrip("0") != str(value).lstrip("0"):
+                return False, f"typed {value!r}, but it shows {got!r}"
+        elif kind == "dropdown":
+            ok, note = _fill_dropdown(frame, f, value)
             if not ok:
                 return ok, note
         elif kind == "selectinput":

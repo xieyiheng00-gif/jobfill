@@ -22,6 +22,7 @@ CASES = [
     ("LinkedIn URL", "linkedin", None, None),
     ("Website / Portfolio", "website", None, None),
     ("Resume/CV", "resume_file", "file", None),
+    ("Type to Add Skills", "skills_list", None, None),              # Workday's skills prompt
     ("Are you legally authorized to work in Canada?", "authorized_to_work", None, None),
     ("Are you legally eligible to work in the U.S. for any employer?", "authorized_to_work", None, None),
     ("Are you authorized to work in the U.S. without the need for employer sponsorship now or in the future?",
@@ -187,7 +188,8 @@ class TestMatcher(unittest.TestCase):
                  ("Start date", "education", "edu_start"), ("Location", None, "current_location"),
                  ("Location", "experience", "exp_location"), ("Company", "experience", "exp_company"),
                  ("Company", "reference", "ref_company"), ("Name", "reference", "ref_name"), ("Name", None, "full_name"),
-                 ("School", None, "edu_school")]
+                 ("School", None, "edu_school"),
+                 ("To (Actual or Expected) Year", "education", "edu_end")]   # Workday's education block
         for label, section, want in cases:
             self.assertEqual(self.m.match(label, section=section).question_id, want, (label, section))
 

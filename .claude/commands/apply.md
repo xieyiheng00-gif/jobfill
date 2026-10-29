@@ -70,8 +70,15 @@ The output includes `app_id`, company, role, and earlier applications to the sam
 3. Multi-page forms (iCIMS, Workday): when a page is done, `python -m jobfill apply next --app <ID>`
    clicks Next / Save and Continue (it never clicks a final submit), then `apply fill` again for the new
    page. Workday's search-and-pick menus ("How Did You Hear About Us?", also two-level ones such as
-   Job Boards > LinkedIn) are picked by jobfill; if a choice is not in the menu the field comes back as
-   a `handoff` whose `why` lists the menu's real choices. Anything else left blank on a Workday page
+   Job Boards > LinkedIn) are picked by jobfill, also in the company's own wording ("LinkedIn Job
+   Posting", or "Social Media" / "Job Board > Other" when LinkedIn itself is not offered); if nothing
+   fits the field comes back as a `handoff` whose `why` lists the menu's real choices. Workday's
+   "Select One" buttons (How Did You Hear About Us?, Country, State, Phone Device Type on many tenants)
+   are read as dropdowns: jobfill opens each list for its options and picks like a normal dropdown.
+   On "My Experience", jobfill clicks Add until Work Experience and Education have one block per stored
+   entry (blocks already open count; it never deletes one), types the Month / Year boxes, picks only exact
+   skill entries (skills the menu lacks come back under `partly`), and never uploads a file into a field
+   that already lists one. Languages / Websites blocks are left to the candidate. Anything else left blank on a Workday page
    goes to the candidate to pick in the window. Every result carries `page` (`n` of `of`, and the
    step `title` when the site shows one).
    **The candidate shares the window.** jobfill checks which page is showing before every `fill`,

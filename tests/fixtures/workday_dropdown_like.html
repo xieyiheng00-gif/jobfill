@@ -1,0 +1,122 @@
+<!doctype html>
+<html><head><meta charset="utf-8"><title>My Information - Acme Careers</title>
+<style>
+  ul[role=listbox] { position: absolute; z-index: 10; width: 344px; max-height: 200px; overflow-y: auto; margin: 0;
+                     padding: 0; list-style: none; background: #fff; border: 1px solid #999; }
+  ul[role=listbox] li { height: 32px; line-height: 32px; padding: 0 8px; }
+  button[aria-haspopup] { width: 344px; height: 40px; text-align: left; }
+  input.shadow { width: 0; height: 0; border: 0; padding: 0; }
+</style></head>
+<body>
+<!-- A local stand-in for Workday's single-choice dropdowns, copied from a live "My Information" page:
+     a <button aria-haspopup="listbox"> reading "Select One" (its <label for> is the question; aria-label adds
+     "Select One Required"), a 0x0 text input beside it, and on click a <ul role=listbox> of <li role=option>
+     added at the end of the page (aria-controls points to it), the first option a disabled "Select One". A
+     click on an option puts its text on the button and closes the list; Escape or a click outside closes it.
+     Flags: #slow=<ms> (options appear late), #rebuild (the list is rebuilt right after it shows),
+     #rerender (choosing replaces the button with a new element), #virtual (long lists render only the rows
+     in view). The page has its own Back button, recorded in window.pageBack. -->
+<div data-automation-id="formField-source" data-fkit-id="source--source"><label for="source--source"><span>How Did You Hear About Us?<abbr aria-hidden="true">*</abbr></span></label>
+  <div><div><div class="dd"><button aria-haspopup="listbox" type="button" value="" aria-label="How Did You Hear About Us? Select One Required" name="source" id="source--source" aria-expanded="false">Select One</button><input class="shadow" type="text" value=""></div></div></div></div>
+<div data-automation-id="formField-candidateIsPreviousWorker"><fieldset><legend>Have you previously been employed by any Acme company?*</legend>
+  <label><input type="radio" name="previousWorker" value="true"> Yes</label><label><input type="radio" name="previousWorker" value="false"> No</label></fieldset></div>
+<div data-automation-id="formField-country"><label for="country--country">Country*</label>
+  <div class="dd"><button aria-haspopup="listbox" type="button" aria-label="Country United States of America Required" name="country" id="country--country" aria-expanded="false">United States of America</button><input class="shadow" type="text" value=""></div></div>
+<div data-automation-id="formField-legalName--firstName"><label for="name--legalName--firstName">First Name*</label><input id="name--legalName--firstName" type="text"></div>
+<div data-automation-id="formField-countryRegion"><label for="address--countryRegion">State*</label>
+  <div class="dd"><button aria-haspopup="listbox" type="button" aria-label="State Select One Required" name="countryRegion" id="address--countryRegion" aria-expanded="false">Select One</button><input class="shadow" type="text" value=""></div></div>
+<div data-automation-id="formField-phoneType"><label for="phoneNumber--phoneType">Phone Device Type*</label>
+  <div class="dd"><button aria-haspopup="listbox" type="button" aria-label="Phone Device Type Select One Required" name="phoneType" id="phoneNumber--phoneType" aria-expanded="false">Select One</button><input class="shadow" type="text" value=""></div></div>
+<button type="button" data-automation-id="pageFooterBackButton" onclick="window.pageBack = true">Back</button>
+<script>
+const STATES = ["Alabama", "Alaska", "Arizona", "Arkansas", "California", "Colorado", "Connecticut", "Delaware",
+  "District of Columbia", "Florida", "Georgia", "Hawaii", "Idaho", "Illinois", "Indiana", "Iowa", "Kansas", "Kentucky",
+  "Louisiana", "Maine", "Maryland", "Massachusetts", "Michigan", "Minnesota", "Mississippi", "Missouri", "Montana",
+  "Nebraska", "Nevada", "New Hampshire", "New Jersey", "New Mexico", "New York", "North Carolina", "North Dakota",
+  "Ohio", "Oklahoma", "Oregon", "Pennsylvania", "Rhode Island", "South Carolina", "South Dakota", "Tennessee",
+  "Texas", "Utah", "Vermont", "Virginia", "Washington", "West Virginia", "Wisconsin", "Wyoming"];
+const OPTIONS = {
+  source: ["Career fairs ( not university/ school related)", "Conference/Trade Show", "Friend / Family who works at Acme",
+           "Job Board / Job Portal", "LinkedIn", "Acme Career Website", "Acme Recruiter", "Other", "Recruitment Agency",
+           "Social Media", "University/School Event"],
+  country: ["Canada", "Mexico", "United Kingdom", "United States of America"],
+  countryRegion: STATES,
+  phoneType: ["Home", "Mobile", "Work"],
+};
+const flags = new URLSearchParams(location.hash.slice(1));
+const slow = Number(flags.get("slow") || 0);
+window.pageBack = false;
+let open = null, serial = 90;   // the open list: {ul, button}
+
+function close() {
+  if (!open) return;
+  open.ul.remove(); open.button.setAttribute("aria-expanded", "false"); open.button.removeAttribute("aria-controls");
+  open = null;
+}
+function choose(button, text) {
+  close();
+  if (flags.has("rerender")) {   // React-style: a new button element takes the old one's place
+    const fresh = button.cloneNode(false);
+    button.replaceWith(fresh);
+    wire(fresh);
+    button = fresh;
+  }
+  button.textContent = text;
+  button.setAttribute("aria-label", button.getAttribute("aria-label").replace(/Select One|United States of America/, text));
+}
+function paint(ul, button, items) {
+  const row = (text, i) => {
+    const li = document.createElement("li");
+    li.setAttribute("role", "option"); li.id = `${ul.id}-${i}`; li.dataset.value = String(i);
+    li.innerHTML = `<div>${text}</div>`;
+    if (i < 0) { li.setAttribute("aria-disabled", "true"); li.dataset.value = ""; }
+    else li.addEventListener("click", () => choose(button, text));
+    return li;
+  };
+  const all = ["Select One", ...items];
+  if (flags.has("virtual") && all.length > 20) {   // only the rows in view, inside a full-height spacer
+    let spacer = ul.querySelector(".spacer");      // kept across repaints, so the scroll position stays
+    if (!spacer) {
+      ul.innerHTML = "";
+      spacer = document.createElement("div"); spacer.className = "spacer";
+      spacer.style.cssText = `height:${all.length * 32}px;position:relative`;
+      ul.appendChild(spacer);
+    }
+    spacer.innerHTML = "";
+    const first = Math.floor(ul.scrollTop / 32);
+    all.slice(first, first + 8).forEach((t, k) => {
+      const li = row(t, first + k - 1);
+      li.style.cssText = `position:absolute;top:${(first + k) * 32}px;left:0;right:0`;
+      spacer.appendChild(li);
+    });
+  } else {
+    ul.innerHTML = "";
+    all.forEach((t, i) => ul.appendChild(row(t, i - 1)));
+  }
+}
+function show(button) {
+  close();
+  const ul = document.createElement("ul");
+  ul.setAttribute("role", "listbox"); ul.id = `evv${serial++}`; ul.tabIndex = -1;
+  const r = button.getBoundingClientRect();
+  ul.style.top = `${r.bottom + scrollY}px`; ul.style.left = `${r.left + scrollX}px`;
+  const wrap = document.createElement("div"), inner = document.createElement("div");   // three levels below <body>
+  wrap.appendChild(inner); inner.appendChild(ul); document.body.appendChild(wrap);
+  open = {ul: wrap, button};
+  button.setAttribute("aria-expanded", "true"); button.setAttribute("aria-controls", ul.id);
+  const items = OPTIONS[button.name];
+  const fill = () => { if (open && open.button === button) paint(ul, button, items); };
+  if (slow) { ul.innerHTML = "<li>Loading</li>"; setTimeout(fill, slow); } else fill();
+  if (flags.has("rebuild")) setTimeout(fill, slow + 400);
+  if (flags.has("virtual")) ul.addEventListener("scroll", fill);
+}
+function wire(button) {
+  button.addEventListener("click", () => (open && open.button === button ? close() : show(button)));
+  button.addEventListener("keydown", (e) => { if (e.key === "Escape") close(); });
+}
+document.querySelectorAll("button[aria-haspopup=listbox]").forEach(wire);
+document.addEventListener("mousedown", (e) => {   // a click outside closes the list
+  if (open && !open.ul.contains(e.target) && e.target !== open.button) close();
+});
+</script>
+</body></html>

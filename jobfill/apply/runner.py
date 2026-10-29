@@ -110,8 +110,12 @@ def fill_frame(frame, store, app_id: int, adapter, *, overwrite: bool | str, fil
     attempts: list[tuple[str, dict, object]] = []   # (field id, field, value): results recorded after the check
     theirs: list[tuple[dict, dict]] = []             # (field, resolver result): answers the candidate gave
     logged = {a["field_key"]: a for a in store.answers(app_id)} if typed is not None else {}
+    # Repeating sections first (Workday's Work Experience / Education "Add"): one block per stored entry.
+    added = adapter.expand(frame, store, dry_run=dry_run)
+    if added:
+        report["added"] = added
     for _ in range(MAX_PASSES):
-        fields = extract(frame, adapter.root_selector)
+        fields = extract(frame, adapter.root_selector, known=seen)
         new = [f for f in fields if f["id"] not in seen]
         if not new:
             break
@@ -137,14 +141,22 @@ def fill_frame(frame, store, app_id: int, adapter, *, overwrite: bool | str, fil
                     entry["fill"] = "would fill"
                 elif f["kind"] == "file" and not files:
                     entry["fill"] = "skipped (--no-files)"
+                elif f["kind"] == "file" and not is_empty(f):
+                    # Uploading again would add a second copy (Workday keeps every file), never replace it.
+                    entry["fill"] = f"kept (already uploaded: {f['value']})"
                 elif not is_empty(f) and not (overwrite is True or (overwrite == "own" and owner == "jobfill")):
                     entry["fill"] = "kept (already has a value)"
                 elif (tried := store.fill_attempts(app_id, _key(store, f), r["value"])) >= MAX_FILL_ATTEMPTS:
                     entry["fill"] = f"not tried: failed {tried} times with this value"
                 else:
-                    ok, note = fill(frame, f, r["value"], root=ROOT, after=adapter.after_fill,
-                                    custom=adapter.custom_fill)
+                    # The question tells a menu adapter how to read its choices ("Social Media" for LinkedIn).
+                    # A search-and-pick menu takes a list (skills) one entry at a time, not as one joined text.
+                    value = r["raw"] if f["kind"] == "selectinput" and isinstance(r.get("raw"), list) else r["value"]
+                    ok, note = fill(frame, {**f, "question_id": r.get("question_id")}, value, root=ROOT,
+                                    after=adapter.after_fill, custom=adapter.custom_fill)
                     entry["fill"] = "ok" if ok else f"failed: {note}"
+                    if ok and note:
+                        entry["note"] = note   # filled, with something left out (a skill the menu lacks)
                     if ok and f["kind"] == "file":
                         adapter.after_upload(frame)
                 if not dry_run:
@@ -238,6 +250,10 @@ def summarize(report: dict, app_id: int) -> dict:
                        for v in pick("needs_user")],
         "uncertain": [{"field": v["field"], "label": v["label"], "candidates": v.get("candidates")} for v in pick("uncertain")],
         "unmatched": [{"field": v["field"], "label": v["label"]} for v in pick("unmatched")],
+        # Filled, but not completely (e.g. skills the menu has no entry for): the agent or candidate decides.
+        "partly": [{"field": k, "label": v["label"], "note": v["note"]} for k, v in fields.items() if v.get("note")
+                   and v.get("fill") == "ok"],
+        "added": report.get("added"),
         "needs_ai": [{"field": v["field"], **v["ai_task"]} for v in pick("needs_ai")],
         # Answered by the candidate in the window: kept as they are, never asked again or overwritten.
         "by_candidate": [{"field": k, "label": v["label"], "value": v.get("value")}
