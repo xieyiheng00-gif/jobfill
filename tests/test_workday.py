@@ -142,6 +142,9 @@ class TestWorkdayPrompt(unittest.TestCase):
 DROPDOWNS = (Path(__file__).resolve().parent / "fixtures" / "workday_dropdown_like.html").as_uri()
 BUTTON = {"How Did You Hear About Us?*": "#source--source", "Country*": "#country--country",
           "State*": "#address--countryRegion", "Phone Device Type*": "#phoneNumber--phoneType"}
+# Questionnaire dropdowns: the question is only in the fieldset's <legend> (aria-label " Select One Required").
+LEGEND = {"Are you at least 18 years old?*": "[name=adult]",
+          "Are you currently serving on the board of directors of any for-profit company?*": "[name=board]"}
 
 
 @unittest.skipUnless(importlib.util.find_spec("playwright"), "Playwright not installed")
@@ -183,7 +186,7 @@ class TestWorkdayDropdowns(unittest.TestCase):
         from jobfill.apply.forms import extract
         page = self.open()
         fields = {f["label"]: f for f in extract(page.main_frame) if f["kind"] == "dropdown"}
-        self.assertEqual(sorted(fields), sorted(BUTTON))
+        self.assertEqual(sorted(fields), sorted({**BUTTON, **LEGEND}))   # legend-labelled ones included
         source = fields["How Did You Hear About Us?*"]
         self.assertTrue(source["required"])
         self.assertEqual(source["value"], "")                                # "Select One" is no answer
@@ -191,6 +194,8 @@ class TestWorkdayDropdowns(unittest.TestCase):
         self.assertNotIn("Select One", source["options"])
         self.assertEqual(fields["Country*"]["value"], "United States of America")
         self.assertEqual(len(fields["State*"]["options"]), 51)
+        self.assertEqual(fields["Are you at least 18 years old?*"]["options"], ["Yes", "No"])
+        self.assertTrue(fields["Are you at least 18 years old?*"]["required"])
         self.assertEqual(page.locator("ul[role=listbox]").count(), 0)       # reading the options chose nothing
 
     def test_fill_picks_each_answer(self):
@@ -201,6 +206,10 @@ class TestWorkdayDropdowns(unittest.TestCase):
                                             "State*": "Wisconsin", "Phone Device Type*": "Mobile"})
         fills = {e["label"]: e["fill"] for e in report["fields"].values() if e["label"] in BUTTON}
         self.assertEqual(set(fills.values()), {"ok"}, fills)
+        self.assertEqual(page.inner_text(LEGEND["Are you at least 18 years old?*"]), "Yes")
+        # A question the bank does not know yet is read, not skipped: it comes back for the candidate.
+        board = next(e for e in report["fields"].values() if e["label"].startswith("Are you currently serving"))
+        self.assertEqual(board["status"], "unmatched")
 
     def test_long_list_that_renders_only_rows_in_view(self):
         page = self.open("#virtual")

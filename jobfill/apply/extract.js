@@ -187,7 +187,10 @@
       const text = clean(el.innerText || el.textContent);
       const aria = clean(el.getAttribute("aria-label"));
       let label = directLabel(el);
-      if (!label || label === aria) label = blockLabel(el, [el]) || clean(text ? aria.split(text)[0] : aria);
+      // No <label for> (Workday's questionnaires): the question is the fieldset's <legend>. The 0x0 input
+      // beside the button belongs to it, so it must not stop the climb as "another question's control".
+      const own = [el, ...(el.parentElement ? el.parentElement.querySelectorAll(":scope > input") : [])];
+      if (!label || label === aria) label = blockLabel(el, own) || clean(text ? aria.split(text)[0] : aria);
       if (!label) continue;
       fields.push({ id: tag(el), kind: "dropdown", type: "dropdown", label, name: el.getAttribute("name") || "",
                     html_id: el.id || "", section: sectionOf(el),

@@ -27,6 +27,12 @@
   <div class="dd"><button aria-haspopup="listbox" type="button" aria-label="State Select One Required" name="countryRegion" id="address--countryRegion" aria-expanded="false">Select One</button><input class="shadow" type="text" value=""></div></div>
 <div data-automation-id="formField-phoneType"><label for="phoneNumber--phoneType">Phone Device Type*</label>
   <div class="dd"><button aria-haspopup="listbox" type="button" aria-label="Phone Device Type Select One Required" name="phoneType" id="phoneNumber--phoneType" aria-expanded="false">Select One</button><input class="shadow" type="text" value=""></div></div>
+<!-- Questionnaire dropdowns (Application Questions): no <label for>; the question is the fieldset's <legend> in
+     rich text, and the button's aria-label is only " Select One Required". -->
+<div data-automation-id="formField-efa5806885ca1001134e029c9dbd0000" data-fkit-id="primaryQuestionnaire--efa5806885ca1001134e029c9dbd0000"><fieldset><legend><div id="rich-label212"><div data-automation-id="richText"><p><b>Are you at least 18 years old?</b><abbr title="required">*</abbr></p></div></div></legend>
+  <div><div><div class="dd"><button aria-haspopup="listbox" type="button" value="" aria-label=" Select One Required" name="adult" id="primaryQuestionnaire--efa5806885ca1001134e029c9dbd0000" aria-expanded="false">Select One</button><input class="shadow" type="text" value=""></div></div><div></div></div></fieldset></div>
+<div data-automation-id="formField-efa5806885ca1001134e029c9dbd0007" data-fkit-id="primaryQuestionnaire--efa5806885ca1001134e029c9dbd0007"><fieldset><legend><div id="rich-label219"><div data-automation-id="richText"><p><b>Are you currently serving on the board of directors of any for-profit company?</b><abbr title="required">*</abbr></p></div></div></legend>
+  <div><div><div class="dd"><button aria-haspopup="listbox" type="button" value="" aria-label=" Select One Required" name="board" id="primaryQuestionnaire--efa5806885ca1001134e029c9dbd0007" aria-expanded="false">Select One</button><input class="shadow" type="text" value=""></div></div><div></div></div></fieldset></div>
 <button type="button" data-automation-id="pageFooterBackButton" onclick="window.pageBack = true">Back</button>
 <script>
 const STATES = ["Alabama", "Alaska", "Arizona", "Arkansas", "California", "Colorado", "Connecticut", "Delaware",
@@ -42,6 +48,8 @@ const OPTIONS = {
   country: ["Canada", "Mexico", "United Kingdom", "United States of America"],
   countryRegion: STATES,
   phoneType: ["Home", "Mobile", "Work"],
+  adult: ["Yes", "No"],
+  board: ["Yes", "No"],
 };
 const flags = new URLSearchParams(location.hash.slice(1));
 const slow = Number(flags.get("slow") || 0);
