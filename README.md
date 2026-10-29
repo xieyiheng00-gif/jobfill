@@ -107,7 +107,9 @@ own terminal** (it refuses to run otherwise, so the agent can never type a passw
   moves to the next derived password.
 - **Flow:** signs in if jobfill created the account before, else creates it (filling password + confirm,
   accepting the terms only if you allowed that once), switches to sign-in when the site says the email
-  already exists, never touches hidden honeypot fields, and stops for CAPTCHAs.
+  already exists, never touches hidden honeypot fields, and stops for CAPTCHAs. A portal that opens on
+  "Create Account" for a company jobfill already has an account with goes straight to "Sign In"; a
+  Workday company is one account whichever of its addresses (myworkdayjobs / myworkdaysite) you use.
 - **Email verification (optional):** fill the `JOBFILL_IMAP_*` lines in `data/secret.env` (for Gmail, an
   app password; check with `jobfill mail test`). `login` then reads the portal's verification email
   read-only, enters the code, or opens the link only if it points at the portal's own domain. Without

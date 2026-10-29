@@ -13,6 +13,7 @@ from __future__ import annotations
 import re
 from dataclasses import asdict, dataclass
 from datetime import datetime, timezone
+from urllib.parse import urlparse
 
 from .. import accounts
 
@@ -108,6 +109,11 @@ def _fill_email(frame, s: dict, email: str) -> None:
             loc.fill(email)
 
 
+def _web_host(page, host: str) -> str:
+    """The portal's real domain, for vetting links in verification emails (the account key is not one)."""
+    return urlparse(page.url).netloc or host
+
+
 def login_flow(page, frame, store, data_dir, host: str, company: str, *, mail=None, max_steps: int = 10,
                wait_ms: int = 3000) -> Outcome:
     """Drive whatever auth page is showing until signed in, or until only the candidate can continue."""
@@ -115,8 +121,9 @@ def login_flow(page, frame, store, data_dir, host: str, company: str, *, mail=No
     if not email:
         return Outcome("failed", "No login email: set `account.login_email` (or your contact email) first.")
     password, acct = accounts.password_for(store, data_dir, host, company)
+    host = acct["host"]   # the row's own key (an account recorded under an older key keeps it)
     since = datetime.now(timezone.utc)
-    went_to_create = created = signed_in_once = verified = False
+    went_to_create = created = signed_in_once = verified = switched = False
     for _ in range(max_steps):
         s = frame.evaluate(ANALYZE_JS)
         acct = store.account(host)
@@ -140,7 +147,7 @@ def login_flow(page, frame, store, data_dir, host: str, company: str, *, mail=No
             return Outcome("failed", f"The site did not accept the generated password: {errors[:200]}", acct)
 
         if s["code"] or s["boxes"]:
-            found = mail.wait_for_verification(since, [host], company) if mail else None
+            found = mail.wait_for_verification(since, [_web_host(page, host)], company) if mail else None
             if not found or not found.get("code"):
                 return Outcome("needs_verification",
                                f"The site sent a verification code to {email}. Type it into the jobfill window, or set "
@@ -159,6 +166,12 @@ def login_flow(page, frame, store, data_dir, host: str, company: str, *, mail=No
             continue
 
         if s["passwords"] >= 2:   # create-account form
+            if acct["status"] != "pending" and s["signin"] and not switched and not created:
+                # The account exists already (made earlier, maybe through the company's other Workday
+                # address): some portals open on "Create Account", so go to the sign-in form.
+                switched = True
+                _click(page, frame, "signin", wait_ms)
+                continue
             if created:
                 return Outcome("failed", f"Account creation did not go through: {errors[:200] or 'no message'}", acct)
             if s["terms"] and not s["terms_checked"]:
@@ -190,7 +203,7 @@ def login_flow(page, frame, store, data_dir, host: str, company: str, *, mail=No
             continue
 
         if s["verify_prompt"] and not verified:
-            found = mail.wait_for_verification(since, [host], company) if mail else None
+            found = mail.wait_for_verification(since, [_web_host(page, host)], company) if mail else None
             if found and found.get("link"):
                 page.goto(found["link"], wait_until="domcontentloaded")   # extract() only returns portal-domain links
                 page.wait_for_timeout(wait_ms)

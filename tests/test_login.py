@@ -39,6 +39,16 @@ class TestPasswords(unittest.TestCase):
         text = (folder / "secret.env").read_text(encoding="utf-8")
         self.assertIn("# JOBFILL_IMAP_PASSWORD=", text)                                  # connector stays off
 
+    def test_workday_accounts_are_keyed_by_company(self):
+        key = accounts.account_key
+        self.assertEqual(key("https://visa.wd5.myworkdayjobs.com/en-US/Jobs/job/X_R1"), "visa.workday")
+        self.assertEqual(key("https://wd5.myworkdaysite.com/en-US/recruiting/visa/Jobs/job/X_R1"), "visa.workday")
+        self.assertEqual(key("visa.wd1.myworkdayjobs.com"), "visa.workday")
+        self.assertEqual(key("https://www.amazon.jobs/en/jobs/1"), "www.amazon.jobs")
+        store = fresh_store(owner=self)   # a row saved under the old, host-style key is still found
+        store.upsert_account("visa.wd5.myworkdayjobs.com", "visa", "a@example.com", "active")
+        self.assertEqual(accounts.find_account(store, "visa.workday")["host"], "visa.wd5.myworkdayjobs.com")
+
     def test_login_email_defaults_to_contact_email(self):
         store = fresh_store(with_profile=True, owner=self)
         self.assertEqual(accounts.login_email(store), "jordan.rivera@example.com")
@@ -149,6 +159,36 @@ class TestLoginFlow(unittest.TestCase):
         page, out = self.run_login("#existing=" + quote(f"jordan.rivera@example.com|{self.password}"))
         self.assertEqual(out.status, "signed_in", out.message)
         self.assertIsNone(page.evaluate("() => window.created"))                # no second account
+
+    def test_known_account_switches_from_create_account_to_sign_in(self):
+        # Reopening a portal whose account exists: it opens on "Create Account" (as some tenants do).
+        self.store.upsert_account(HOST, "acme", "jordan.rivera@example.com", "active")
+        page, out = self.run_login("#start=create&existing=" + quote(f"jordan.rivera@example.com|{self.password}"))
+        self.assertEqual(out.status, "signed_in", out.message)
+        self.assertTrue(page.is_visible("#app"))
+        self.assertIsNone(page.evaluate("() => window.created"))                # no create attempt at all
+
+    def test_account_unknown_here_but_existing_on_the_site(self):
+        # Made by jobfill elsewhere (another copy, or the company's other Workday address): the site says the
+        # email exists, jobfill switches to sign-in, and the derived password works because it only depends
+        # on the company.
+        page, out = self.run_login("#start=create&code=none&existing=" +
+                                   quote(f"jordan.rivera@example.com|{self.password}"))
+        self.assertEqual(out.status, "signed_in", out.message)
+        self.assertTrue(page.is_visible("#app"))
+        self.assertEqual(self.store.account(HOST)["status"], "active")
+
+    def test_account_recorded_under_the_other_workday_address(self):
+        self.store.upsert_account("acme.wd1.myworkdayjobs.com", "acme", "jordan.rivera@example.com", "active")
+        from jobfill.apply.login import login_flow
+        page = self.browser.new_page()
+        self.addCleanup(page.close)
+        page.goto((FIXTURES / "auth_like.html").as_uri() + "#start=create&existing=" +
+                  quote(f"jordan.rivera@example.com|{self.password}"))
+        out = login_flow(page, page.main_frame, self.store, self.data, "acme.workday", "Acme", wait_ms=200)
+        self.assertEqual(out.status, "signed_in", out.message)
+        self.assertIsNone(page.evaluate("() => window.created"))
+        self.assertEqual([a["host"] for a in self.store.accounts()], ["acme.wd1.myworkdayjobs.com"])   # no duplicate
 
     def test_terms_need_standing_consent(self):
         self.store.set_fact("consent.account_terms", False)

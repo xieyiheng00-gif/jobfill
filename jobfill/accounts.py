@@ -12,8 +12,10 @@ from __future__ import annotations
 import hashlib
 import hmac
 import os
+import re
 import secrets
 from pathlib import Path
+from urllib.parse import urlparse
 
 from .text import company_key, normalize
 
@@ -98,7 +100,27 @@ def login_email(store) -> str | None:
     return store.get_fact("account.login_email") or store.get_fact("contact.email")
 
 
+def account_key(url_or_host: str) -> str:
+    """Which account a page belongs to. A Workday company (tenant) is one account whichever address
+    serves it: visa.wd5.myworkdayjobs.com and wd5.myworkdaysite.com/recruiting/visa are both 'visa.workday'."""
+    u = urlparse(url_or_host if "://" in url_or_host else "https://" + url_or_host)
+    host = u.netloc.lower().split(":")[0]
+    if re.search(r"(myworkdayjobs|myworkdaysite)\.com$|\.workday\.com$", host):
+        first = host.split(".")[0]
+        tenant = first
+        if re.fullmatch(r"wd\d+|www", first):
+            m = re.search(r"/recruiting/([^/?#]+)", u.path)
+            tenant = m.group(1) if m else first
+        return f"{tenant.lower()}.workday"
+    return host
+
+
+def find_account(store, key: str) -> dict | None:
+    """The account row for ``key``, also when it was recorded under an older, host-style key."""
+    return store.account(key) or next((r for r in store.accounts() if account_key(r["host"]) == key), None)
+
+
 def password_for(store, data_dir: Path, host: str, company: str) -> tuple[str, dict]:
     """Password for this portal's account, plus the account row (created as 'pending' if new)."""
-    row = store.account(host) or store.upsert_account(host, account_name(company), login_email(store), "pending")
+    row = find_account(store, host) or store.upsert_account(host, account_name(company), login_email(store), "pending")
     return derive_password(secret(data_dir), row["company_key"], row["version"]), row

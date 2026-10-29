@@ -3,7 +3,8 @@
 <body>
 <!-- A local stand-in for a portal login (Workday-like): sign in, create account with terms and a
      honeypot, an emailed verification code, then the application form. Accounts live in memory;
-     #existing=email|password preloads one, #code=none skips verification. -->
+     #existing=email|password preloads one, #code=none skips verification, #start=create opens on the
+     Create Account form. -->
 <div id="signin" class="view">
   <form id="f1"><h2>Sign In</h2>
     <label for="e1">Email Address</label><input id="e1" type="text" name="email">
@@ -38,9 +39,11 @@ const accounts = {};
 const params = new URLSearchParams(location.hash.slice(1));
 if (params.get("existing")) { const [e, p] = params.get("existing").split("|"); accounts[e] = p; }
 const needCode = params.get("code") !== "none";
+const startOnCreate = params.get("start") === "create";   // some Workday tenants open on Create Account
 window.trapFilled = false;
 const show = (id) => document.querySelectorAll(".view").forEach((v) => { v.hidden = v.id !== id; });
 const trapped = (form) => { if (form.querySelector("[name=beecatcher]").value) window.trapFilled = true; };
+if (startOnCreate) show("create");
 document.getElementById("toCreate").onclick = () => show("create");
 document.getElementById("toSignin").onclick = () => show("signin");
 document.getElementById("f1").onsubmit = (ev) => {

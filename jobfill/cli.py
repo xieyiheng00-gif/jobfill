@@ -295,7 +295,7 @@ def cmd_login(store, args):
     adapter = adapters.get(state["ats"])
     with browser.session(data_dir, args.headless) as ctx:
         page, _ = runner.open_page(ctx, state, adapter)
-        outcome = login_flow(page, adapter.frame(page), store, data_dir, urlparse(page.url).netloc, app["company"],
+        outcome = login_flow(page, adapter.frame(page), store, data_dir, accounts.account_key(page.url), app["company"],
                              mail=mail)
         state["page_url"] = page.url
     runner.save_state(data_dir, args.app, state)
@@ -318,7 +318,7 @@ def cmd_account(store, args):
         _out([{k: a[k] for k in ("host", "company_key", "email", "status", "version", "updated_at")}
               for a in store.accounts()])
     elif args.action == "password":
-        row = store.account(args.host) if args.host else None
+        row = accounts.find_account(store, accounts.account_key(args.host)) if args.host else None
         if row is None and not args.company:
             raise ValidationError("pass --host of an existing account (see `account list`) or --company for a new site")
         name, version = (row["company_key"], row["version"]) if row else (accounts.account_name(args.company), 1)
@@ -327,12 +327,15 @@ def cmd_account(store, args):
                          "note": "Run with --show in your own terminal to print the password."})
         _require_terminal("account password --show", "prints a password", "account password --show ...")
         print(accounts.derive_password(accounts.secret(data_dir), name, version))
-    elif args.action == "rotate":
-        row = store.rotate_account(args.host)
+    elif args.action in ("rotate", "forget"):
+        row = accounts.find_account(store, accounts.account_key(args.host))
+        if row is None:
+            raise ValidationError(f"no account for {args.host} (see `jobfill account list`)")
+        if args.action == "forget":
+            return _out({"host": row["host"], "removed": store.forget_account(row["host"])})
+        row = store.rotate_account(row["host"])
         _out({"host": row["host"], "version": row["version"],
               "note": "Set the site's password to the new one: `account password --host ... --show` (yourself)."})
-    elif args.action == "forget":
-        _out({"host": args.host, "removed": store.forget_account(args.host)})
 
 
 def cmd_mail(store, args):
