@@ -64,14 +64,32 @@ The output includes `app_id`, company, role, and earlier applications to the sam
        the window.
      A field whose value changes (a corrected fact, a new answer) gets two fresh tries.
 2. Run `python -m jobfill apply fill --app <ID>` again. Stored facts and recorded answers now fill
-   the remaining fields; values already in the form are kept (`--overwrite` replaces them).
-   One-off questions not worth learning: `apply set` with the answer.
+   the remaining fields; values already in the form are kept (`--overwrite` re-types only values
+   jobfill typed itself, e.g. after a corrected fact). One-off questions not worth learning:
+   `apply set` with the answer.
 3. Multi-page forms (iCIMS, Workday): when a page is done, `python -m jobfill apply next --app <ID>`
    clicks Next / Save and Continue (it never clicks a final submit), then `apply fill` again for the new
    page. Workday's search-and-pick menus ("How Did You Hear About Us?", also two-level ones such as
    Job Boards > LinkedIn) are picked by jobfill; if a choice is not in the menu the field comes back as
    a `handoff` whose `why` lists the menu's real choices. Anything else left blank on a Workday page
-   goes to the candidate to pick in the window.
+   goes to the candidate to pick in the window. Every result carries `page` (`n` of `of`, and the
+   step `title` when the site shows one).
+   **The candidate shares the window.** jobfill checks which page is showing before every `fill`,
+   `set`, `next` and `submit`, and follows them:
+   - They answered or changed questions themselves: those values are never overwritten (not even with
+     `--overwrite`), are recorded as their answers, and are listed in `by_candidate`. Do not ask them
+     again or write an AI answer for those questions.
+   - They clicked Next themselves (`moved_by_candidate: true`): carry on from that page. `apply next`
+     does not click again (`clicked: null`); run `apply fill` for the page they are on.
+   - They clicked Back (`paused: "candidate_went_back"`): they are checking or changing an earlier page.
+     Stop: no fill, set, next or submit, and do not ask them to hurry. Say in one line that you will
+     wait, then run `python -m jobfill apply watch --app <ID>` (in the background if your runtime can;
+     it waits up to 10 minutes, `--timeout` to change) and act on its `event`: `returned` or `moved_on`
+     → `apply fill`; `went_back` → keep waiting; `submitted` → they submitted it themselves (already
+     recorded); `closed` → ask whether to stop; `timeout` → watch again or check in. Fill the earlier
+     page only if they ask you to: `apply fill --here`.
+   - Whenever you hand the window to the candidate (questions in the window, a review), `apply watch`
+     is how you notice what they did next.
 4. Review, in ONE message: every written answer (numbered, with character/word count), any
    `handoff` field still unresolved, and a reminder that the window shows the whole filled form.
    Ask them to check the window, then to say "submit" or list changes.
@@ -100,6 +118,9 @@ Plain Python still answers the questions; you drive the page.
    - File uploads: if the browser cannot attach the file, ask the candidate to attach the resume
      (path: `python -m jobfill fact get documents.resume_path`) in the browser pane.
    - Click Next / Continue to move on. Never click the final submit button on your own.
+   - The candidate may use the browser pane too. Read the page before each action: never change a
+     value they entered; if they moved on, continue on their page; if they went back to an earlier
+     page, stop and wait until they return or tell you to go on.
 3. Review and submit as in Step 2.4-2.5: one review message, explicit go-ahead, then click Submit (or
    the candidate does), then `python -m jobfill app update <ID> --status submitted`.
 

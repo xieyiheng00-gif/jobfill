@@ -262,10 +262,13 @@ def cmd_apply(store, args):
         if args.action == "fill":
             return _out(runner.fill_command(store, data_dir, args.app, overwrite=args.overwrite,
                                             headless=args.headless, files=not args.no_files,
-                                            dry_run=args.dry_run))
+                                            dry_run=args.dry_run, here=args.here))
         if args.action == "set":
             value = json.loads(args.value) if args.json else args.value
-            return _out(runner.set_command(store, data_dir, args.app, args.field, value, headless=args.headless))
+            return _out(runner.set_command(store, data_dir, args.app, args.field, value, headless=args.headless,
+                                           force=args.force, here=args.here))
+        if args.action == "watch":
+            return _out(runner.watch_command(store, data_dir, args.app, timeout=args.timeout, headless=args.headless))
         if args.action == "next":
             return _out(runner.next_command(data_dir, args.app, headless=args.headless))
         if args.action == "submit":
@@ -582,18 +585,27 @@ def build_parser() -> argparse.ArgumentParser:
     for name, helptext in (("fill", "fill the form from the database (Greenhouse/Lever/iCIMS/Ashby)"),
                            ("set", "type one value into one field"), ("next", "click Next/Continue (never submit)"),
                            ("submit", "click the final submit button; requires --confirm"),
+                           ("watch", "wait until the candidate changes page (Next, Back, submit) in the window"),
                            ("status", "summary of the last fill")):
         x = aps.add_parser(name, help=helptext)
         x.add_argument("--app", type=int, required=True)
         x.add_argument("--headless", action="store_true", help=argparse.SUPPRESS)
         if name == "fill":
-            x.add_argument("--overwrite", action="store_true", help="replace values already in the form")
+            x.add_argument("--overwrite", action="store_true",
+                           help="re-type values jobfill typed earlier (never the candidate's own answers)")
             x.add_argument("--no-files", action="store_true", help="do not upload files")
             x.add_argument("--dry-run", action="store_true",
                            help="read and resolve the form without typing anything (preview)")
+        if name in ("fill", "set"):
+            x.add_argument("--here", action="store_true",
+                           help="act on an earlier page the candidate went back to (only when they ask)")
         if name == "set":
             x.add_argument("--field", required=True); x.add_argument("--value", required=True)
             x.add_argument("--json", action="store_true", help="parse VALUE as JSON (lists, booleans)")
+            x.add_argument("--force", action="store_true",
+                           help="replace an answer the candidate typed in the window (only when they ask)")
+        if name == "watch":
+            x.add_argument("--timeout", type=float, default=600, help="seconds to wait (default 600)")
         if name == "submit":
             x.add_argument("--confirm", action="store_true",
                            help="the candidate explicitly approved submitting this application")

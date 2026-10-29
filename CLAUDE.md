@@ -44,7 +44,10 @@ must answer once, new questions to classify, and tier-3 answers that must be wri
   (`pip install playwright` then `python -m playwright install chromium`).
   Tests: `python -m unittest discover -s tests -t .` (browser tests skip without Playwright).
 - Filler code: `jobfill/apply/` (`detect.py` system detection, `extract.js` + `forms.py` generic field
-  reading/filling, `adapters.py` per-ATS quirks, `runner.py` commands, `browser.py` shared window).
+  reading/filling, `adapters.py` per-ATS quirks, `runner.py` commands, `browser.py` shared window,
+  `pages.py` which page the candidate is on). The candidate shares the window: jobfill never overwrites
+  a value it did not type (state `typed`), follows them when they click Next, and pauses when they go
+  Back. Multi-page behavior is tested on `tests/fixtures/wizard_like.html`.
 - Accounts: `jobfill/accounts.py` (secret.env, HMAC-SHA256 per-company passwords, login email),
   `jobfill/apply/login.py` (sign in / create / verify flow), `jobfill/mail.py` (optional IMAP reader).
   The `accounts` table holds no passwords. Login is tested only on `tests/fixtures/auth_like.html`.

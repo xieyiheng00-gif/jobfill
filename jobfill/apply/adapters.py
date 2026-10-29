@@ -22,6 +22,7 @@ class Adapter:
     ready_selector = "input, select, textarea"
     root_selector: str | None = None
     submit_selector = "button[type=submit], input[type=submit]"
+    step_selector: str | None = "[aria-current=step]"   # the current step of a multi-page form's progress bar
 
     def open(self, page, url: str) -> None:
         page.goto(url, wait_until="domcontentloaded", timeout=60000)
@@ -342,6 +343,7 @@ class Workday(Adapter):
     ready_selector = ("[data-automation-id=signInContent], [data-automation-id=applyFlowPage], "
                       "[data-automation-id=adventureButton], input")
     submit_selector = "[data-automation-id=bottom-navigation-next-button]:has-text('Submit')"
+    step_selector = "[data-automation-id=progressBarActiveStep], [aria-current=step]"
 
     def open(self, page, url: str) -> None:
         super().open(page, url)
