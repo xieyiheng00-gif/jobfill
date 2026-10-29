@@ -47,8 +47,9 @@ The output includes `app_id`, company, role, and earlier applications to the sam
      `consent.*` fact and learn the question onto it.
    - `needs_user` - collect them (plus prompts of facts you just defined) into ONE numbered message;
      store the answers (`fact set`, `record add`).
-   - `needs_ai` - write each answer from its task and the shared `ai_context` exactly as in `/fill`
-     step 4, save it to `data/answers/app<ID>_<question_id>.txt`, and record it:
+   - `needs_ai` - write each answer from its task, its playbook and the shared `ai_context` exactly as
+     in `/fill` step 4, save it to `data/answers/app<ID>_<question_id>.txt`, run `answer check` and fix
+     what it reports, then record it:
      `python -m jobfill answer record --app <ID> --question <question_id> --label "<the question's label on the form>" --file data/answers/app<ID>_<question_id>.txt`
    - `fill_failed` - failed once. The next `apply fill` tries it once more by itself (often a dropdown
      that loaded slowly); nothing to do yet.

@@ -51,6 +51,11 @@ Use ONLY the `ai_task` of each field plus the shared `ai_context` from the resol
 read the whole profile or the database; the context already holds the slices each question needs.
 
 - Follow `ai_task.guidance` and every line of `ai_context.rules`.
+- Write with the technique for the question type: `ai_context.writing.playbooks[ai_task.playbook]`
+  gives the answer's `structure` (in order), the expected `length` when the form sets no limit, and
+  what to `avoid`; `writing.style` applies to every answer. Examples: `star` for "tell us about a
+  time...", `why_company` (specific hook -> candidate's link -> contribution), `about_you`
+  (present -> past -> future), `learning` (gap -> method -> proof -> next).
 - `mode: unique` - written fresh for this company; no wording from other applications.
   `mode: adapt` - tailor the stored stories/summary; still specific to this posting.
 - For `why_company`, `interest_product` and `know_company`, verify one or two company facts from the
@@ -61,7 +66,15 @@ read the whole profile or the database; the context already holds the slices eac
 - If the context cannot support an honest answer, do not invent: draft the rest, and put the open
   point as a numbered question in the review message (step 5).
 
-Save each answer to `data/answers/app<ID>_<question_id>.txt` and record it:
+Save each answer to `data/answers/app<ID>_<question_id>.txt`, then check it in plain Python and fix
+every `fix` issue (over a limit, a placeholder, another company's name, a near-copy of an answer
+written for another company); rewrite `review` items (cliches, markdown, a company answer that never
+names the company) unless the question calls for them:
+
+`python -m jobfill answer check --app <ID> --question <question_id> --file data/answers/app<ID>_<question_id>.txt [--max-chars N] [--max-words N]`
+
+Go through `writing.checklist`, then record it (record runs the same check and refuses an AI answer
+with `fix` issues; `--force` only for a false alarm, such as a partner company named in the posting):
 
 `python -m jobfill answer record --app <ID> --question <question_id> --label "<the question's label on the form>" --file data/answers/app<ID>_<question_id>.txt`
 
@@ -70,8 +83,8 @@ Recording matters: a re-opened form reuses the answer, a second role at the same
 
 ## 5. Review and submit
 
-Send ONE review message: every `needs_ai` answer numbered with its character/word count, any
-`warning` (for example text over a limit), then the complete answer list. They reply with edits by
+Send ONE review message: every `needs_ai` answer numbered with its character/word count and the
+playbook it follows, any `warning` (for example text over a limit), then the complete answer list. They reply with edits by
 number or approve everything at once. Never submit without their explicit go-ahead. After they submit:
 `python -m jobfill app update <ID> --status submitted`.
 

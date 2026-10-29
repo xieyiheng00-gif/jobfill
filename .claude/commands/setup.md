@@ -158,7 +158,9 @@ and the documents, draft all of these, and show every draft in ONE numbered mess
 `profile.headline`, `profile.summary` (80-150 factual words), `profile.motivations`,
 `profile.career_goals`, `profile.strengths`, `profile.weaknesses`, `profile.work_style`,
 `profile.interests`, `profile.writing_style`, and each STAR story as a `story` record
-(situation / task / action / result, themes).
+(situation / task / action / result, themes). Aim for four to six stories that together cover many
+themes (failure, conflict, leadership, teamwork, pressure, learning, initiative, data, customer,
+influence, adaptability, mentoring, creativity...): behavioral questions pick stories by theme.
 
 Store only what they approve (`fact set`, story records via patch import); apply their edits.
 

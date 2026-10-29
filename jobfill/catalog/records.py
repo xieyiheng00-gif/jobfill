@@ -129,8 +129,9 @@ RECORD_KINDS: dict[str, dict] = {
         "key": ["title"],
         "fields": {
             "title": "Short name for the story",
-            "themes": "List from: failure, conflict, leadership, teamwork, pressure, learning, "
-                      "initiative, ambiguity, feedback, accomplishment, challenge",
+            "themes": "List from: failure, conflict, leadership, teamwork, pressure, learning, initiative, "
+                      "ambiguity, feedback, accomplishment, challenge, data, customer, influence, adaptability, "
+                      "mentoring, ethics, creativity",
             "situation": "Context", "task": "What you had to do", "action": "What YOU did",
             "result": "Outcome, with real numbers", "source": "Which job/project it comes from",
         },
@@ -138,4 +139,5 @@ RECORD_KINDS: dict[str, dict] = {
 }
 
 STORY_THEMES = ["failure", "conflict", "leadership", "teamwork", "pressure", "learning",
-                "initiative", "ambiguity", "feedback", "accomplishment", "challenge"]
+                "initiative", "ambiguity", "feedback", "accomplishment", "challenge",
+                "data", "customer", "influence", "adaptability", "mentoring", "ethics", "creativity"]

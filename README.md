@@ -167,6 +167,17 @@ Each result has a `status`: `filled` (use `value`), `needs_ai` (agent writes it 
 the shared `ai_context`), `needs_user` (ask once, store with the given command), `uncertain`
 (agent picks one of `candidates`), `unmatched` (new question, queued for `/learn`), `skipped`.
 
+### Written answers (tier 3)
+
+Open questions ("Why us?", "Tell us about yourself", "What did you learn recently?", "Tell us about
+a time...", "How do you use AI in your work?", first 90 days, values, gaps) are recognized like any
+other question, then written per application. Each `needs_ai` task names a **playbook**, the
+technique recruiters expect for that question type (STAR for behavioral, hook -> link -> contribution
+for "why us", present -> past -> future for "about you", gap -> method -> proof for learning...).
+`ai_context.writing` carries the shared style rules, only the playbooks used on that form, and a
+checklist. Before recording, `answer check` tests the draft in plain Python: limits, placeholders,
+another company's name, a near-copy of an answer written for another company, cliches, markdown.
+
 ## How the database keeps up with new questions
 
 1. An unknown label is saved in `pending_questions` with its options and the company.
@@ -189,7 +200,7 @@ export [--format json|md] [--tier] [--out]
 match "<label>" [--section] [--type] [--company]        (debug the matcher)
 resolve <fields.json> [--app ID] [--no-log] [--compact]
 context --question <id> [--app ID] [--max-chars N]      (AI context for one tier-3 question)
-answer record|list                                       (application answer log)
+answer check|record|list                                 (check a written answer, then log it)
 apply detect|start <url> | apply fill|set|next|submit|status --app ID | apply close
 login --app ID  (you run it) | account email|list|password|rotate|forget | mail test
 app start|list|show|update

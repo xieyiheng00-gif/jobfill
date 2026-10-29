@@ -30,7 +30,8 @@ must answer once, new questions to classify, and tier-3 answers that must be wri
 - Never infer sensitive facts (EEO, criminal record, citizenship, visa/sponsorship, date of birth,
   salary) from documents or names. Ask; "decline" is a valid EEO answer.
 - Tier-3 answers: use only the `ai_task` + `ai_context` that `resolve`/`context` return. Do not load
-  the whole profile; the point of jobfill is to keep those prompts small.
+  the whole profile; the point of jobfill is to keep those prompts small. Write with the playbook the
+  task names (`ai_context.writing`) and run `answer check` before `answer record`.
 - Ground every written claim in stored data. If the data cannot support an answer, ask.
 - Never submit an application without the candidate's explicit confirmation. Never type passwords
   or verification codes, never solve CAPTCHAs. Account sign-up/sign-in is `python -m jobfill login`,
@@ -51,5 +52,6 @@ must answer once, new questions to classify, and tier-3 answers that must be wri
   `jobfill/report.py` turns it into `data/applications/app<ID>_*.md|json` and `app stats`.
 - Built-in catalog: `jobfill/catalog/` (`facts.py`, `records.py`, `choices.py`, `questions.py`).
   `python -m jobfill init` re-seeds it into existing databases without touching learned rows.
-- Adding a built-in question: add it to `questions.py`, add a real-world label to `CASES` in
-  `tests/test_matcher.py`, run the tests (they also reject alias collisions between questions).
+- Adding a built-in question: add it to `questions.py` (tier 3: give it a `playbook` from
+  `catalog/playbooks.py`), add a real-world label to `CASES` in `tests/test_matcher.py`, run the tests
+  (they also reject alias collisions between questions). Draft checks live in `jobfill/writing.py`.

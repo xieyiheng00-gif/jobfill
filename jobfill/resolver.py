@@ -23,7 +23,7 @@ import json
 import re
 from datetime import date
 
-from .catalog import RECORD_KINDS, choice_set
+from .catalog import CHECKLIST, PLAYBOOKS, RECORD_KINDS, STYLE, choice_set, playbook_for
 from .derive import RULES, Answer, Ctx, NeedFact, NeedUser, _degree_level, is_current, lacks_skill
 from .matcher import Matcher
 from .store import DATE_FIELDS
@@ -52,6 +52,10 @@ THEME_WORDS = {
     "initiative": ("initiative", "above and beyond", "improve", "ownership"),
     "ambiguity": ("ambigu", "uncertain", "incomplete"), "feedback": ("feedback", "critic"),
     "accomplishment": ("proud", "accomplish", "achievement"), "challenge": ("challeng", "difficult", "hard"),
+    "data": ("data", "metric", "analy"), "customer": ("customer", "client", "user"),
+    "influence": ("persuad", "convinc", "influenc", "buy in"), "adaptability": ("adapt", "change", "pivot"),
+    "mentoring": ("mentor", "coach", "teach", "taught"), "ethics": ("ethic", "integrity", "dilemma", "right thing"),
+    "creativity": ("creativ", "innovat", "unconventional", "outside the box"),
 }
 
 
@@ -90,7 +94,8 @@ class Resolver:
         if ai:
             keys = {k for r in ai for k in r["ai_task"]["context_keys"]}
             themes = {t for r in ai for t in r["ai_task"]["themes"]}
-            out["ai_context"] = build_ai_context(self.store, self.app, keys, themes)
+            playbooks = {r["ai_task"]["playbook"] for r in ai}
+            out["ai_context"] = build_ai_context(self.store, self.app, keys, themes, playbooks)
         return out
 
     def resolve_field(self, field: dict, position: int = 0) -> dict:
@@ -212,7 +217,8 @@ class Resolver:
             themes = {t for t, words in THEME_WORDS.items() if any(w in lab for w in words)}
         return {"status": "needs_ai", "ai_task": {
             "question_id": q["id"], "question": field.get("label") or q["text"], "mode": ai["mode"],
-            "scope": ai["scope"], "guidance": ai["guidance"], "deliverable": ai["deliverable"],
+            "scope": ai["scope"], "guidance": ai["guidance"], "playbook": playbook_for(ai, q["category"]),
+            "deliverable": ai["deliverable"],
             "limits": limits, "context_keys": ai["context"], "themes": sorted(themes),
             "record_with": f"python -m jobfill answer record --app {self.app['id'] if self.app else '<id>'} "
                            f"--question {q['id']} --label \"<the question's label>\" --file <answer.txt>",
@@ -350,8 +356,9 @@ def _span(r: dict) -> str:
     return f"{start} to {end}"
 
 
-def build_ai_context(store, app: dict | None, keys: set[str], themes: set[str]) -> dict:
-    """Only the profile slices the pending questions need, so the agent's prompt stays small."""
+def build_ai_context(store, app: dict | None, keys: set[str], themes: set[str],
+                     playbooks: set[str] = frozenset()) -> dict:
+    """Only the profile slices and writing playbooks the pending questions need, so the prompt stays small."""
     f = store.get_fact
     name = f("identity.preferred_name") or f("identity.first_name")
     cand: dict = {"name": " ".join(x for x in (name, f("identity.last_name")) if x)}
@@ -380,6 +387,9 @@ def build_ai_context(store, app: dict | None, keys: set[str], themes: set[str]) 
         elif key == "education":
             cand["education"] = [f"{r.get('degree', '')} in {r.get('field_of_study', '?')}, {r.get('school')} ({_span(r)})"
                                  for r in edu]
+        elif key == "coursework":
+            cand["coursework"] = [f"{r.get('school')}: {', '.join(c) if isinstance(c, list) else c}"
+                                  for r in edu if (c := r.get("coursework"))]
         elif key == "experience":
             cand["experience"] = [f"{r.get('title')}, {r.get('company')} ({_span(r)}): {r.get('summary', '')}".rstrip(": ")
                                   for r in exp]
@@ -405,6 +415,10 @@ def build_ai_context(store, app: dict | None, keys: set[str], themes: set[str]) 
     if f("profile.writing_style"):
         cand["writing_style"] = f("profile.writing_style")
     ctx = {"candidate": cand, "rules": AI_RULES}
+    if playbooks:
+        # How to write: shared style, the technique per question type on this form, a check before recording.
+        ctx["writing"] = {"style": STYLE, "playbooks": {p: PLAYBOOKS[p] for p in sorted(playbooks)},
+                          "checklist": CHECKLIST}
     if app:
         ctx["application"] = {k: app[k] for k in ("id", "company", "role", "url") if app.get(k)}
         if app.get("posting"):
@@ -425,7 +439,7 @@ def ai_task_for(store, question_id: str, app_id: int | None, label: str | None =
     res = r._ai(q, q["answer"]["ai"], field)
     if res["status"] == "needs_ai":
         res["ai_context"] = build_ai_context(store, r.app, set(res["ai_task"]["context_keys"]),
-                                             set(res["ai_task"]["themes"]))
+                                             set(res["ai_task"]["themes"]), {res["ai_task"]["playbook"]})
     return res
 
 

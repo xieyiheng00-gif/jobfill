@@ -11,10 +11,11 @@ import sys
 from pathlib import Path
 
 from . import db, report
-from .catalog import RECORD_KINDS, choice_set
+from .catalog import PLAYBOOKS, RECORD_KINDS, choice_set
 from .resolver import Resolver, ai_task_for, dumps
 from .store import Store, ValidationError
-from .text import normalize
+from .text import company_key, normalize
+from .writing import check_answer, mentions
 
 
 def _out(obj) -> None:
@@ -173,13 +174,31 @@ def cmd_context(store, args):
     _out(ai_task_for(store, args.question, args.app, args.label, max_chars=args.max_chars, max_words=args.max_words))
 
 
+def _check_answer(store, args, text: str) -> dict:
+    """`writing.check_answer` with what only the database knows: other companies and earlier answers."""
+    app = store.application(args.app)
+    own = {company_key(r.get("company")) for r in store.records("experience")} | \
+          {company_key(r.get("school")) for r in store.records("education")}
+    posting = normalize(app.get("posting"))
+    others = [a["company"] for a in store.applications()
+              if company_key(a["company"]) not in own and not mentions(posting, company_key(a["company"]))]
+    return check_answer(text, question_id=args.question, company=app["company"], max_chars=args.max_chars,
+                        max_words=args.max_words, min_words=args.min_words, other_companies=others,
+                        earlier=store.written_answers(exclude_app_id=args.app))
+
+
 def cmd_answer(store, args):
-    if args.action == "record":
+    if args.action in ("record", "check"):
         text = Path(args.file).read_text(encoding="utf-8").strip() if args.file else args.text
         if not text:
             raise ValidationError("pass --text or --file")
+        check = _check_answer(store, args, text)
+        if args.action == "check":
+            return _out(check)
+        if not check["ok"] and args.source == "ai" and not args.force:
+            return _out({"recorded": False, "check": check,
+                         "next": "Fix every `fix` issue and record again (--force only if one is a false alarm)."})
         q = store.questions().get(args.question)
-        store.application(args.app)
         rows = store.answers(args.app)
         label = args.label
         if not label:   # attach to the open question of this type on the form, if there is exactly one
@@ -190,7 +209,8 @@ def cmd_answer(store, args):
                             question_id=args.question, source=args.source, tier=q["tier"] if q else None,
                             status="filled", section=row["section"] if row else None, idx=row["idx"] if row else None)
         _out({"recorded": True, "application_id": args.app, "question_id": args.question, "chars": len(text),
-              "words": len(text.split()), "record": report.write(store, _data_dir(args), args.app)["markdown"]})
+              "words": len(text.split()), "issues": check["issues"],
+              "record": report.write(store, _data_dir(args), args.app)["markdown"]})
     elif args.action == "list":
         _out(store.answers(args.app))
 
@@ -373,6 +393,8 @@ def cmd_learn(store, args):
                                    "Answer from the candidate data and the posting.",
                                    "context": [c.strip() for c in args.context.split(",") if c.strip()],
                                    "themes": [], "deliverable": "text", "optional": "answer"}}, 3
+            if args.playbook:
+                answer["ai"]["playbook"] = args.playbook
         else:
             raise ValidationError("--new-question needs --fact KEY or --ai unique|adapt")
         q = store.add_question(args.new_question, tier, args.category, args.text or p["label"], answer,
@@ -518,10 +540,17 @@ def build_parser() -> argparse.ArgumentParser:
 
     s = sub.add_parser("answer", help="record an AI/user answer in the application log")
     an = s.add_subparsers(dest="action", required=True)
-    x = an.add_parser("record"); x.add_argument("--app", type=int, required=True)
-    x.add_argument("--question", required=True)
+    for name in ("check", "record"):
+        x = an.add_parser(name, help="check a written answer, then record it" if name == "record" else
+                          "check a draft: limits, placeholders, other companies' names, reuse, cliches")
+        x.add_argument("--app", type=int, required=True); x.add_argument("--question", required=True)
+        x.add_argument("--text"); x.add_argument("--file")
+        x.add_argument("--max-chars", type=int); x.add_argument("--max-words", type=int)
+        x.add_argument("--min-words", type=int)
+    # x is now the record parser.
     x.add_argument("--label", help="the question's wording on the form (links the answer to that question)")
-    x.add_argument("--text"); x.add_argument("--file"); x.add_argument("--source", default="ai", choices=["ai", "user"])
+    x.add_argument("--source", default="ai", choices=["ai", "user"])
+    x.add_argument("--force", action="store_true", help="record although the check found `fix` issues")
     x = an.add_parser("list"); x.add_argument("--app", type=int, required=True)
     s.set_defaults(fn=cmd_answer)
 
@@ -605,6 +634,8 @@ def build_parser() -> argparse.ArgumentParser:
     s.add_argument("--scope", default="application", choices=["company", "application"])
     s.add_argument("--context", default="summary,experience,projects,skills")
     s.add_argument("--guidance"); s.add_argument("--category", default="custom"); s.add_argument("--text")
+    s.add_argument("--playbook", choices=sorted(PLAYBOOKS),
+                   help="writing technique for a tier-3 question (default: from --category)")
     s.add_argument("--section"); s.add_argument("--choices")
     s.add_argument("--pattern", help="regex over normalized text instead of the literal label")
     s.add_argument("--priority", type=int, default=0)

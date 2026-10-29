@@ -5,11 +5,12 @@ from functools import lru_cache
 
 from .choices import CHOICE_SETS, DEGREE_RANK
 from .facts import FACTS
+from .playbooks import CHECKLIST, PLAYBOOKS, STYLE, playbook_for
 from .questions import QUESTIONS
 from .records import RECORD_KINDS, STORY_THEMES
 
-__all__ = ["CHOICE_SETS", "DEGREE_RANK", "FACTS", "QUESTIONS", "RECORD_KINDS", "STORY_THEMES",
-           "choice_set"]
+__all__ = ["CHECKLIST", "CHOICE_SETS", "DEGREE_RANK", "FACTS", "PLAYBOOKS", "QUESTIONS", "RECORD_KINDS",
+           "STORY_THEMES", "STYLE", "choice_set", "playbook_for"]
 
 
 @lru_cache(maxsize=None)
