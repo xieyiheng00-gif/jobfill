@@ -4,7 +4,8 @@
 <!-- A local stand-in for a portal login (Workday-like): sign in, create account with terms and a
      honeypot, an emailed verification code, then the application form. Accounts live in memory;
      #existing=email|password preloads one, #code=none skips verification, #start=create opens on the
-     Create Account form. -->
+     Create Account form, #reject=1 refuses every sign-up, #after=signin returns to the sign-in form after
+     creating the account. -->
 <div id="signin" class="view">
   <form id="f1"><h2>Sign In</h2>
     <label for="e1">Email Address</label><input id="e1" type="text" name="email">
@@ -59,7 +60,12 @@ document.getElementById("f2").onsubmit = (ev) => {
   if (!document.getElementById("terms").checked) { err.textContent = "You must accept the terms."; return; }
   if (pw !== document.getElementById("p3").value) { err.textContent = "Passwords do not match."; return; }
   if (accounts[email]) { err.textContent = "An account with this email address already exists."; return; }
-  accounts[email] = pw; window.created = [email, pw]; show(needCode ? "verify" : "app");
+  if (params.get("reject")) { err.textContent = "Something went wrong. Please try again later."; return; }
+  accounts[email] = pw; window.created = [email, pw];
+  if (params.get("after") === "signin") {   // some portals send you back to sign in after creating the account
+    show("signin"); document.getElementById("err1").textContent = ""; return;
+  }
+  show(needCode ? "verify" : "app");
 };
 document.getElementById("f3").onsubmit = (ev) => {
   ev.preventDefault();

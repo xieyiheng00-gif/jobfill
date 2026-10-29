@@ -153,6 +153,23 @@ class TestLoginFlow(unittest.TestCase):
         _, out = self.run_login()
         self.assertEqual(out.status, "needs_verification")
         self.assertIn("jordan.rivera@example.com", out.message)
+        # The site asked for a code, so it accepted the sign-up: the next login signs in, not creates.
+        self.assertEqual(self.store.account(HOST)["status"], "created")
+
+    def test_rejected_sign_up_is_not_recorded_as_created(self):
+        page, out = self.run_login("#reject=1")
+        self.assertEqual(out.status, "failed")
+        self.assertIn("tries creating it again", out.message)
+        self.assertEqual(self.store.account(HOST)["status"], "pending")
+        # Next login: still a sign-up (not a sign-in that the site would reject).
+        page2, _ = self.run_login("#reject=1")
+        self.assertTrue(page2.is_visible("#create"))
+
+    def test_sign_up_confirmed_by_the_sign_in_form(self):
+        page, out = self.run_login("#after=signin")
+        self.assertEqual(out.status, "signed_in", out.message)
+        self.assertEqual(page.evaluate("() => window.created"), ["jordan.rivera@example.com", self.password])
+        self.assertEqual(self.store.account(HOST)["status"], "active")
 
     def test_known_account_signs_in_directly(self):
         self.store.upsert_account(HOST, "acme", "jordan.rivera@example.com", "active")

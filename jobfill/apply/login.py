@@ -137,6 +137,11 @@ def login_flow(page, frame, store, data_dir, host: str, company: str, *, mail=No
             if s["signin"]:
                 _click(page, frame, "signin", wait_ms)
                 continue
+        if created and s["passwords"] < 2 and acct["status"] == "pending" and not RULES.search(errors):
+            # The create form is gone without a complaint (verification step, sign-in form or the
+            # application): only now is the account known to exist.
+            store.set_account_status(host, "created")
+            acct = store.account(host)
         if signed_in_once and BAD_LOGIN.search(errors):
             store.set_account_status(host, "failed")
             return Outcome("failed", f"The site rejected the sign-in for {email}. If you made this account yourself, "
@@ -173,7 +178,9 @@ def login_flow(page, frame, store, data_dir, host: str, company: str, *, mail=No
                 _click(page, frame, "signin", wait_ms)
                 continue
             if created:
-                return Outcome("failed", f"Account creation did not go through: {errors[:200] or 'no message'}", acct)
+                return Outcome("failed", f"The site did not accept the new account ({errors[:200] or 'no message'}). "
+                                         "Nothing is recorded as created, so the next login tries creating it again.",
+                               acct)
             if s["terms"] and not s["terms_checked"]:
                 if store.get_fact("consent.account_terms") is not True:
                     return Outcome("consent_required", "Creating this account requires accepting the site's terms. "
@@ -183,8 +190,7 @@ def login_flow(page, frame, store, data_dir, host: str, company: str, *, mail=No
             _fill_email(frame, s, email)
             _auth(frame, "pw1").fill(password)
             _auth(frame, "pw2").fill(password)
-            created = True
-            store.upsert_account(host, acct["company_key"], email, "created")
+            created = True   # submitted; the record says "created" only once the site accepts it (above)
             _click(page, frame, "submit", wait_ms)
             continue
 
