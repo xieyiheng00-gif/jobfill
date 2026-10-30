@@ -10,7 +10,8 @@ from __future__ import annotations
 import re
 
 from ..derive import choose_source
-from ..text import normalize, phrase_in
+from ..text import closest_options, names_same, normalize, phrase_in
+from .forms import NoExactChoice
 
 CONFIRMATION = re.compile(r"(thank you|thanks) for (applying|your application|your interest)|application (has been |was )?"
                           r"(received|submitted)|we('ve| have) received your application|successfully submitted", re.I)
@@ -279,22 +280,11 @@ def _same(a: str, b: str) -> bool:
     return normalize(a) == normalize(b)
 
 
-def _is(text: str, want: str) -> bool:
-    """``text`` is ``want`` with at most a qualifier Workday adds: "Job Boards > LinkedIn",
-    "United States of America (+1)", "Python (Programming Language)". A shared word is not enough:
-    SQL is not "Interactive SQL", Docker is not "Docker - Micron"."""
-    w = normalize(want)
-    if normalize(re.split(r"\s+>\s+|:\s+", text)[-1]) == w:
-        return True
-    m = re.match(r"^(.*?)\s*\(([^()]*)\)\s*$", text)
-    return bool(m) and w in (normalize(m.group(1)), normalize(m.group(2)))
-
-
 def _pick(items: list[dict], want: str, question_id: str | None = None) -> int | None:
-    """The menu entry that is ``want``: the same text first, then a qualified form of it (``_is``). For "How
+    """The menu entry that is ``want``: the same text first, then a qualified form of it (``names_same``). For "How
     did you hear", an entry naming the source counts too ("LinkedIn Job Posting")."""
     texts = [i["text"] for i in items]
-    for test in (lambda t: _same(t, want), lambda t: _is(t, want),
+    for test in (lambda t: _same(t, want), lambda t: names_same(t, want),
                  lambda t: question_id in HOW_HEARD and bool(normalize(t))
                  and (phrase_in(normalize(want), normalize(t)) or phrase_in(normalize(t), normalize(want)))):
         hit = next((k for k, t in enumerate(texts) if test(t)), None)
@@ -388,8 +378,9 @@ def _close_menu(frame, loc) -> None:
         frame.wait_for_timeout(300)
 
 
-def _search(frame, loc, want: str, picked, question_id: str | None = None) -> bool:
-    """Type ``want`` and press Enter (Workday then searches every level), and click the result meaning it."""
+def _search(frame, loc, want: str, picked, question_id: str | None = None, seen: list | None = None) -> bool:
+    """Type ``want`` and press Enter (Workday then searches every level), and click the result meaning it.
+    ``seen`` collects what the search offered."""
     loc.press("Escape")
     loc.fill("")
     loc.click()
@@ -397,6 +388,8 @@ def _search(frame, loc, want: str, picked, question_id: str | None = None) -> bo
     loc.type(want, delay=20)
     loc.press("Enter")
     found = _menu(frame, before=shown)
+    if seen is not None:
+        seen.extend(i["text"] for i in found if i["text"] not in seen)
     k = _pick(found, want, question_id)
     return k is not None and _click_entry(frame, found[k]["text"]) and picked(found[k]["text"])
 
@@ -467,6 +460,16 @@ def fill_selectinput(frame, field: dict, value) -> tuple[bool, str]:
             if len(values) > 1:
                 lacking.append(want)
                 continue
+            if qid not in HOW_HEARD:
+                # One name (a school, a field of study) in a catalogue: what the candidate picked for it before,
+                # else no look-alike but a question for them, with what the menu offers.
+                if any(_search(frame, loc, alt, picked) for alt in field.get("alternatives") or []):
+                    continue
+                offered: list[str] = []
+                _search(frame, loc, want, lambda t: False, seen=offered)
+                if not offered and (word := max(re.findall(r"[^\W\d_]{4,}", want), key=len, default="")):
+                    _search(frame, loc, word, lambda t: False, seen=offered)   # nothing for the whole name
+                raise NoExactChoice(want, closest_options(want, offered))
             entries = _browse(frame, loc, field["id"], want, start, pills, qid)
             path = _choose(want, entries, qid)
             if path is None:

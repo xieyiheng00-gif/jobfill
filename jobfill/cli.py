@@ -329,6 +329,14 @@ def cmd_login(store, args):
     _out(out)
 
 
+def cmd_choice(store, args):
+    """Choices the candidate picked where a form had no option exactly matching a stored answer."""
+    if args.action == "list":
+        _out(store.all_learned_choices())
+    elif args.action == "forget":
+        _out({"forgotten": store.forget_choices(args.question, args.value, args.choice)})
+
+
 def cmd_account(store, args):
     from . import accounts
     data_dir = _data_dir(args)
@@ -627,6 +635,14 @@ def build_parser() -> argparse.ArgumentParser:
     x = acs.add_parser("rotate", help="use the next password for a site after resetting it there"); x.add_argument("--host", required=True)
     x = acs.add_parser("forget", help="drop an account record"); x.add_argument("--host", required=True)
     s.set_defaults(fn=cmd_account)
+
+    s = sub.add_parser("choice", help="choices picked where no option was exactly the stored answer (reused on "
+                                      "other forms)")
+    chs = s.add_subparsers(dest="action", required=True)
+    chs.add_parser("list")
+    x = chs.add_parser("forget", help="drop remembered choices (all for a question, or one stored answer / choice)")
+    x.add_argument("--question", required=True); x.add_argument("--value"); x.add_argument("--choice")
+    s.set_defaults(fn=cmd_choice)
 
     s = sub.add_parser("mail", help="optional mail connector for verification codes")
     ms = s.add_subparsers(dest="action", required=True)

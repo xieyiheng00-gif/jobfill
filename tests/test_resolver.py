@@ -390,5 +390,39 @@ class TestPronouns(unittest.TestCase):
         self.assertEqual(self.store.get_fact("identity.pronouns"), ["she_her"])
 
 
+class TestNoExactOption(unittest.TestCase):
+    """A stored name (school, field of study) with no exact option is asked, never matched to a look-alike."""
+
+    def setUp(self):
+        self.store = fresh_store(with_profile=True, owner=self)   # school 0: University of Wisconsin-Madison
+        self.app = self.store.start_application("Acme", "Engineer")
+        self.school = {"id": "s", "label": "School or University", "type": "select", "section": "education",
+                       "options": ["University of Wisconsin", "University of Wisconsin-Milwaukee", "Other"]}
+
+    def resolve(self, field):
+        return Resolver(self.store, self.app, today=TODAY).resolve([field])["fields"][0]
+
+    def test_look_alike_is_asked_with_the_closest_options(self):
+        r = self.resolve(self.school)
+        self.assertEqual((r["status"], r["no_exact"]), ("needs_user", True))
+        self.assertEqual(r["choices"][0], "University of Wisconsin")
+        self.assertEqual(r["raw"], "University of Wisconsin-Madison")
+
+    def test_choice_picked_before_is_reused_where_offered(self):
+        self.store.remember_choice("edu_school", "University of Wisconsin-Madison", "Other", "Globex")
+        r = self.resolve(self.school)
+        self.assertEqual((r["status"], r["value"]), ("filled", "Other"))
+        # Not offered on this form: asked again.
+        r = self.resolve({**self.school, "options": ["University of Wisconsin", "Stanford University"]})
+        self.assertEqual(r["status"], "needs_user")
+
+    def test_exact_and_qualified_names_still_fill(self):
+        r = self.resolve({**self.school, "options": ["Stanford University", "University of Wisconsin-Madison"]})
+        self.assertEqual(r["value"], "University of Wisconsin-Madison")
+        field = {"id": "f", "label": "Field of Study", "type": "select", "section": "education",
+                 "options": ["Computer Science (CS)", "Mathematics"]}
+        self.assertEqual(self.resolve(field)["value"], "Computer Science (CS)")
+
+
 if __name__ == "__main__":
     unittest.main()

@@ -13,7 +13,9 @@
      that only take typed keys (a value set from outside is reset), Degree as a "Select One" button, Field of Study
      and Skills as search-and-pick prompts (search on Enter; picks show as pills), and a resume drop zone whose
      input is cleared once the upload is taken, the file then listed beside it. Flags: #uploaded=<name> (a file
-     is already uploaded), #blank=<n> (n blank Work Experience blocks already open). Records window.uploads. -->
+     is already uploaded), #blank=<n> (n blank Work Experience blocks already open), #noce (Field of Study lacks
+     "Computer Engineering", offering only look-alikes), #school=dropdown (School is a "Select One" list of US
+     universities: "University of Wisconsin" but not "-Madison"). Records window.uploads. -->
 <h3>My Experience</h3>
 <div role="group" aria-labelledby="Work-Experience-section"><h4 id="Work-Experience-section">Work Experience</h4>
   <div class="blocks"></div><button type="submit" data-automation-id="add-button">Add</button></div>
@@ -34,7 +36,10 @@
 const flags = new URLSearchParams(location.hash.slice(1));
 const SKILLS = ["Interactive SQL", "SQL", "SQL Server", "Python (Programming Language)", "Docker - Micron", "Docker",
                 "PyTorch", "Kubernetes Operations", "Git", "GitHub"];
-const FIELDS = ["Computer Engineering", "Computer Science", "Data Science", "Electrical Engineering", "Mathematics"];
+const FIELDS = flags.has("noce")
+  ? ["Computer Engineering Technology", "Computer Science", "Data Science", "Electrical and Computer Engineering", "Mathematics"]
+  : ["Computer Engineering", "Computer Science", "Data Science", "Electrical Engineering", "Mathematics"];
+const SCHOOLS = ["Stanford University", "University of Michigan", "University of Wisconsin", "University of Wisconsin-Milwaukee", "Other"];
 const DEGREES = ["High School Diploma", "Associate's Degree", "Bachelor's Degree", "Master's Degree", "Doctorate (PhD)"];
 let serial = 5;
 window.uploads = 0;
@@ -129,13 +134,16 @@ function addEducation(group) {
   const k = `education-${serial++}`, n = group.querySelectorAll("h5").length + 1;
   const block = el(`<div><div><h5 id="Education-${n}-panel">Education ${n}</h5><button type="submit">Delete</button></div><div data-fkit-id="${k}--null"></div></div>`);
   const body = block.lastChild;
-  body.appendChild(text(k, "schoolName", "School or University", true));
+  if (flags.get("school") === "dropdown") {
+    body.appendChild(el(`<div data-automation-id="formField-school"><label for="${k}--school">School or University<abbr>*</abbr></label><button aria-haspopup="listbox" type="button" aria-label="School or University Select One Required" id="${k}--school" name="school" aria-expanded="false">Select One</button></div>`));
+    dropdown(body.querySelector("[name=school]"), SCHOOLS);
+  } else body.appendChild(text(k, "schoolName", "School or University", true));
   body.appendChild(el(`<div data-automation-id="formField-degree"><label for="${k}--degree">Degree<abbr>*</abbr></label><button aria-haspopup="listbox" type="button" aria-label="Degree Select One Required" id="${k}--degree" name="degree" aria-expanded="false">Select One</button></div>`));
   body.appendChild(el(`<div data-automation-id="formField-fieldOfStudy"><label for="${k}--fieldOfStudy">Field of Study</label><div data-automation-id="multiSelectContainer"><div data-automation-id="selectedItemList"></div><input id="${k}--fieldOfStudy" type="text" data-uxi-widget-type="selectinput" placeholder="Search"></div></div>`));
   body.appendChild(text(k, "gradeAverage", "Overall Result (GPA)"));
   body.append(dateField(k, "firstYearAttended", "From", ["Year"]), dateField(k, "lastYearAttended", "To (Actual or Expected)", ["Year"]));
   body.querySelectorAll("[role=spinbutton]").forEach((s) => spin(s, 4));
-  dropdown(body.querySelector("button[aria-haspopup]"), DEGREES);
+  dropdown(body.querySelector("[name=degree]"), DEGREES);
   prompt(body.querySelector("[data-uxi-widget-type=selectinput]"), FIELDS);
   return block;
 }

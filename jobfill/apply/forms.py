@@ -5,7 +5,7 @@ from __future__ import annotations
 import re
 from pathlib import Path
 
-from ..text import normalize
+from ..text import closest_options, names_same, normalize
 
 EXTRACT_JS = (Path(__file__).with_name("extract.js")).read_text(encoding="utf-8")
 
@@ -89,6 +89,15 @@ MARK_JS = r"""async ([id, text]) => {
   }
   return false;
 }"""
+
+class NoExactChoice(Exception):
+    """The list has no option that is exactly the answer (a school, a field of study). jobfill leaves the field
+    empty rather than pick a look-alike: the candidate picks, and the pick is remembered for other forms."""
+
+    def __init__(self, value: str, offered: list[str]):
+        super().__init__(f"no option is exactly {value!r}")
+        self.value, self.offered = value, offered
+
 
 INPUT_TYPES = {"text": "text", "email": "email", "tel": "tel", "url": "url", "number": "number", "date": "date",
                "search": "text", "month": "text", "password": "password"}
@@ -276,9 +285,13 @@ def _fill_dropdown(frame, f: dict, value) -> tuple[bool, str]:
         texts = _list_options(frame, f["id"])
         if not texts:
             return False, "its list did not open"
-        i = _best_option(texts, want)
+        i = next((k for k, t in enumerate(texts) if names_same(t, want)), None)
+        for alt in ([] if i is not None else f.get("alternatives") or []):   # picked for it on an earlier form
+            i = next((k for k, t in enumerate(texts) if normalize(t) == normalize(alt)), None)
+            if i is not None:
+                break
         if i is None:
-            return False, f"no option matches {want!r} (it offers {texts[:15]})"
+            raise NoExactChoice(want, closest_options(want, texts))
         target = texts[i]
         # The list is rebuilt as it loads: find the option again right before each click.
         for _ in range(3):
@@ -395,5 +408,7 @@ def fill(frame, f: dict, value, *, root: Path, after=None, custom=None) -> tuple
         if after:
             after(frame, f, value)
         return True, ""
+    except NoExactChoice:
+        raise   # not a failure to retry: a question for the candidate
     except Exception as e:
         return False, str(e).splitlines()[0][:200]

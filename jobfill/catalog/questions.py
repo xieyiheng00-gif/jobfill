@@ -53,11 +53,16 @@ def rec(kind, field):
     return {"record": kind, "field": field}
 
 
-def ai(mode, scope, context, guidance, themes=(), deliverable="text", optional="answer", playbook=None):
+def ai(mode, scope, context, guidance, themes=(), deliverable="text", optional="answer", playbook=None,
+       examples=0):
+    """``examples``: write that many drafts, each from a different angle of the posting match, for the
+    candidate to pick from (motivation questions, where their voice and reasons matter most)."""
     spec = {"mode": mode, "scope": scope, "context": list(context), "guidance": guidance,
             "themes": list(themes), "deliverable": deliverable, "optional": optional}
     if playbook:
         spec["playbook"] = playbook
+    if examples:
+        spec["examples"] = examples
     return {"ai": spec}
 
 
@@ -978,10 +983,11 @@ QUESTIONS = [
        "why would you like to work at {company}", "why us", "why do you want to work for {company}",
        "why are you interested in joining {company}", "why {company} and why now",
        "why do you want to work with us", "why are you applying to {company}"],
-      answer=ai("unique", "company", ["motivations", "career_goals", "experience", "projects", "skills"],
+      answer=ai("unique", "company", ["motivations", "career_goals", "relevant", "experience", "projects", "skills"],
                 "Connect one or two specific, verifiable things about this company (product, mission, "
                 "technical work, recent news) to the candidate's real experience and motivations. "
-                "No generic praise; never reuse wording written for another company.", playbook="why_company"),
+                "No generic praise; never reuse wording written for another company.", playbook="why_company",
+                examples=2),
       patterns=[P(r"^why (do you want|would you like|are you interested|are you excited|do you wish|did you choose|"
                   r"have you chosen)( to)? (work|join|working|joining|apply|applying)( at| for| with| to)? "
                   + SELF_COMPANY + r"$", 3),
@@ -995,9 +1001,11 @@ QUESTIONS = [
        "why are you interested in this opportunity", "what made you apply for this role", "why did you apply",
        "why are you applying", "why this position", "what excites you about this opportunity",
        "why are you interested in this {role} role"],
-      answer=ai("unique", "application", ["motivations", "career_goals", "experience", "projects", "skills"],
+      answer=ai("unique", "application", ["motivations", "career_goals", "relevant", "experience", "projects",
+                                         "skills"],
                 "Map the role's main responsibilities and requirements (from the posting) to the candidate's "
-                "most relevant real work, and say what they want to learn or own in this role.", playbook="why_role"),
+                "most relevant real work, and say what they want to learn or own in this role.", playbook="why_role",
+                examples=2),
       patterns=[P(r"^(why|what) (are you (interested|excited|applying)|interests you|excites you|draws you|attracts you|"
                   r"made you|appeals to you|do you want|did you apply|motivated you)\b.*"
                   r"\b(this|the|our) (role|position|job|opportunity|team|internship)\b", 4),
@@ -1009,7 +1017,7 @@ QUESTIONS = [
        "what makes you a strong candidate", "how are you qualified for this position",
        "how do your skills match this role", "why are you a great fit for this position",
        "what qualifies you for this role", "how does your background prepare you for this role"],
-      answer=ai("unique", "application", ["experience", "projects", "skills", "education", "strengths"],
+      answer=ai("unique", "application", ["relevant", "experience", "projects", "skills", "education", "strengths"],
                 "Pick the two or three posting requirements the candidate meets best and prove each with a "
                 "concrete, true example. Acknowledge nothing that is not asked; invent nothing.", playbook="fit"),
       patterns=[P(r"\b(good|great|strong|right|ideal|best|perfect) (fit|match|candidate|person)\b", 5),
@@ -1019,19 +1027,19 @@ QUESTIONS = [
        "what is your favorite {company} product", "what do you like about our mission",
        "why does our mission resonate with you", "what about our mission resonates with you",
        "what excites you about our mission", "how would you improve {company}"],
-      answer=ai("unique", "company", ["motivations", "projects", "skills"],
+      answer=ai("unique", "company", ["motivations", "relevant", "projects", "skills"],
                 "Talk about the actual product/mission as described in the posting or company research the "
                 "agent verified. Be specific and honest; if suggesting improvements, keep them modest and concrete.",
-                playbook="why_company"),
+                playbook="why_company", examples=2),
       patterns=[P(r"(^| )(our|\{company\}s?|the companys?) (product|products|mission|platform|technology|vision|"
                   r"app|service)\b", 5)]),
     Q("know_company", 3, "motivation", "What do you know about our company?",
       ["what do you know about {company}", "what do you know about us", "what do you know about our company",
        "what do you know about our business"],
-      answer=ai("unique", "company", ["motivations"],
+      answer=ai("unique", "company", ["motivations", "relevant"],
                 "Summarize verified facts about the company in the candidate's voice and connect one to "
                 "their interests. Use only facts the agent checked from the company's own sources.",
-                playbook="why_company")),
+                playbook="why_company", examples=2)),
     Q("industry_interest", 3, "motivation", "Why are you interested in this industry?",
       ["why are you interested in this industry", "why do you want to work in this field",
        "what interests you about our industry", "why are you interested in this field",
@@ -1368,9 +1376,11 @@ QUESTIONS = [
        "why are you looking for a new job", "why are you looking for a new role", "why are you considering a change",
        "why are you looking to leave", "why do you want to change jobs", "why did you leave your last job",
        "why did you leave your previous job"],
-      answer=ai("adapt", "application", ["motivations", "career_goals"],
-                "Forward-looking and positive, from the stored motivations and goals; if the candidate's real reason "
-                "is not stored, ask them.", playbook="candid"),
+      answer=ai("adapt", "application", ["motivations", "career_goals", "relevant"],
+                "Forward-looking and positive, from the stored motivations and goals and what this role offers "
+                "that their current one does not; never a reason they did not give. If their real reason is not "
+                "stored, the examples are framings for them to choose from or correct.", playbook="candid",
+                examples=2),
       patterns=[P(r"^why (are|were) you (leaving|looking to leave|thinking (of|about) leaving|considering leaving|"
                   r"looking for a new (job|role|position|opportunity))\b", 4),
                 P(r"\b(reason|reasons) for (leaving|wanting to leave) your current\b", 4)]),

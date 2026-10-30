@@ -160,6 +160,27 @@ def canonical_state(text: str | None) -> str | None:
 
 # --------------------------------------------------------------------------- options
 
+def names_same(option: str, value: str) -> bool:
+    """``option`` is ``value``, or ``value`` with a qualifier a form adds: "Job Boards > LinkedIn",
+    "United States of America (+1)", "Python (Programming Language)". A shared word is not enough:
+    "University of Wisconsin" is not "University of Wisconsin-Madison", SQL is not "Interactive SQL"."""
+    w = normalize(value)
+    if not w:
+        return False
+    if normalize(option) == w or normalize(re.split(r"\s+>\s+|:\s+", option)[-1]) == w:
+        return True
+    m = re.match(r"^(.*?)\s*\(([^()]*)\)\s*$", option)
+    return bool(m) and w in (normalize(m.group(1)), normalize(m.group(2)))
+
+
+def closest_options(value: str, options: list, n: int = 10) -> list[str]:
+    """The ``n`` options most like ``value`` (to show the candidate when none is exactly it)."""
+    v = normalize(value)
+    labels = [option_label(o) for o in options]
+    scored = sorted(labels, key=lambda l: -SequenceMatcher(None, v, normalize(l)).ratio())
+    return scored[:n]
+
+
 def option_label(option) -> str:
     if isinstance(option, dict):
         return str(option.get("label") or option.get("text") or option.get("value") or "")

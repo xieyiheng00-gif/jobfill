@@ -13,7 +13,7 @@ from ..resolver import Resolver
 from ..text import normalize
 from . import adapters, browser, pages
 from .detect import Detection, detect
-from .forms import extract, fill, is_empty, to_resolver_field
+from .forms import NoExactChoice, extract, fill, is_empty, to_resolver_field
 
 MAX_PASSES = 4   # re-read the form after filling: answers can reveal follow-up questions
 MAX_FILL_ATTEMPTS = 2   # same field, same value: a second failure means retrying will not help
@@ -94,7 +94,8 @@ def start(store, data_dir: Path, url: str, *, company=None, role=None, source=No
 # --------------------------------------------------------------------------- fill
 
 def fill_frame(frame, store, app_id: int, adapter, *, overwrite: bool | str, files: bool = True,
-               today: date | None = None, dry_run: bool = False, typed: dict | None = None) -> dict:
+               today: date | None = None, dry_run: bool = False, typed: dict | None = None,
+               asked: dict | None = None) -> dict:
     """Fill everything the database can answer on the current page. Works on any Playwright frame.
 
     ``overwrite``: True replaces values already in the form (a page jobfill has just opened, where nobody
@@ -103,6 +104,8 @@ def fill_frame(frame, store, app_id: int, adapter, *, overwrite: bool | str, fil
     updated in place. With it, a value the candidate typed or changed is recognized: it is kept, never
     overwritten, and recorded as their answer (an open question they answered is not asked again).
     ``dry_run`` reads and resolves the form without typing anything (a preview).
+    ``asked`` maps a field's answer key to the stored answer no option exactly matched (left for the candidate);
+    their pick, made in the window or through `apply set`, is then remembered for that answer on other forms.
     """
     report: dict = {"fields": {}, "passes": 0}
     ai_context: dict | None = None
@@ -131,11 +134,16 @@ def fill_frame(frame, store, app_id: int, adapter, *, overwrite: bool | str, fil
             entry = {k: v for k, v in r.items() if k not in ("raw", "source", "match")}
             entry["kind"] = f["kind"]
             owner = None if dry_run or overwrite is True else _owner(store, f, r, typed, logged)
+            if owner is None and asked and _key(store, f) in asked and not is_empty(f) and typed is not None:
+                owner = "candidate"   # jobfill asked and left it empty: what is there now is their pick
             if owner == "candidate":
                 entry = {"label": f["label"], "question_id": r.get("question_id"), "kind": f["kind"],
                          "status": "filled", "value": f["value"], "fill": "kept (the candidate's answer)",
                          "by": "candidate"}
                 theirs.append((f, r))
+            elif r.get("no_exact"):
+                if asked is not None and not dry_run:
+                    asked[_key(store, f)] = {"question_id": r.get("question_id"), "value": r.get("raw")}
             elif r["status"] == "filled":
                 if dry_run:
                     entry["fill"] = "would fill"
@@ -152,8 +160,14 @@ def fill_frame(frame, store, app_id: int, adapter, *, overwrite: bool | str, fil
                     # The question tells a menu adapter how to read its choices ("Social Media" for LinkedIn).
                     # A search-and-pick menu takes a list (skills) one entry at a time, not as one joined text.
                     value = r["raw"] if f["kind"] == "selectinput" and isinstance(r.get("raw"), list) else r["value"]
-                    ok, note = fill(frame, {**f, "question_id": r.get("question_id")}, value, root=ROOT,
-                                    after=adapter.after_fill, custom=adapter.custom_fill)
+                    try:
+                        ok, note = fill(frame, {**f, "question_id": r.get("question_id"),
+                                                "alternatives": r.get("alternatives")}, value, root=ROOT,
+                                        after=adapter.after_fill, custom=adapter.custom_fill)
+                    except NoExactChoice as e:
+                        _ask_candidate(store, app_id, f, r, entry, e, asked)
+                        report["fields"][r["id"]] = entry
+                        continue
                     entry["fill"] = "ok" if ok else f"failed: {note}"
                     if ok and note:
                         entry["note"] = note   # filled, with something left out (a skill the menu lacks)
@@ -177,10 +191,13 @@ def fill_frame(frame, store, app_id: int, adapter, *, overwrite: bool | str, fil
         if typed is not None and not str(entry["fill"]).startswith(("kept", "skipped", "not tried")) \
                 and fid in final:
             typed[_key(store, f)] = final[fid]["value"]   # what jobfill left there, ok or not
+    company = store.application(app_id)["company"]
     for f, r in theirs:
         store.record_answer(app_id, _key(store, f), f["label"], f["value"], question_id=r.get("question_id"),
                             source="user", tier=r.get("tier"), status="filled", fill="kept (the candidate's answer)",
                             section=f.get("section"), idx=f.get("index"))
+        if asked is not None and (a := asked.pop(_key(store, f), None)):
+            store.remember_choice(a["question_id"], a["value"], f["value"], company)   # picked in the window
     if ai_context:
         report["ai_context"] = ai_context
     return report
@@ -198,6 +215,18 @@ def _close(a, b) -> bool:
     """Same answer as displayed: "United States +1" in a dropdown is the stored "United States"."""
     x, y = _flat(a), _flat(b)
     return x == y or bool(x and y and (x in y or y in x))
+
+
+def _ask_candidate(store, app_id: int, f: dict, r: dict, entry: dict, e: NoExactChoice, asked: dict | None) -> None:
+    """No option is exactly the stored answer: leave the field empty and ask the candidate."""
+    entry.update(status="needs_user", no_exact=True, choices=e.offered, fill="not filled: no exact choice",
+                 ask=f"No choice for '{f['label']}' is exactly your stored answer ({e.value}). "
+                     f"Closest: {e.offered}. Pick one in the window, or say which; it is remembered for other forms.")
+    store.record_answer(app_id, _key(store, f), f["label"], None, question_id=r.get("question_id"),
+                        source=r.get("source") or "", tier=r.get("tier"), status="needs_user",
+                        fill="not filled: no exact choice", section=f.get("section"), idx=f.get("index"))
+    if asked is not None:
+        asked[_key(store, f)] = {"question_id": r.get("question_id"), "value": e.value}
 
 
 def _owner(store, f: dict, r: dict, typed: dict | None, logged: dict) -> str | None:
@@ -246,7 +275,10 @@ def summarize(report: dict, app_id: int) -> dict:
         "handoff": [{"field": v["field"], "label": v["label"], "value": v.get("value"), "options": v.get("options"),
                      "why": v["fill"], "attempts": v.get("attempts")} for v in pick("handoff")],
         "needs_user": [{"field": v["field"], "label": v["label"], "ask": v.get("ask"), "fact": v.get("fact"),
-                        "choices": v.get("choices"), "store": v.get("store"), "sensitive": v.get("sensitive")}
+                        "choices": v.get("choices"), "store": v.get("store"), "sensitive": v.get("sensitive"),
+                        # No exact option: the candidate picks in the window, or tells the agent (`apply set`).
+                        "set_with": f"python -m jobfill apply set --app {app_id} --field {v['field']} "
+                                    "--value \"<their choice>\"" if v.get("no_exact") else None}
                        for v in pick("needs_user")],
         "uncertain": [{"field": v["field"], "label": v["label"], "candidates": v.get("candidates")} for v in pick("uncertain")],
         "unmatched": [{"field": v["field"], "label": v["label"]} for v in pick("unmatched")],
@@ -327,7 +359,8 @@ def fill_page(store, data_dir: Path, app_id: int, state: dict, page, adapter, *,
         full = fresh and not state.get("filled_once")
         report = fill_frame(adapter.frame(page), store, app_id, adapter,
                             overwrite=True if full else ("own" if overwrite else False),
-                            typed=state.setdefault("typed", {}), files=files, dry_run=dry_run)
+                            typed=state.setdefault("typed", {}), asked=state.setdefault("asked", {}),
+                            files=files, dry_run=dry_run)
         report["blockers"] = blockers
         if spot["where"] == "new" and spot["index"] > 0:
             report["moved_by_candidate"] = True
@@ -360,14 +393,25 @@ def set_field(store, app_id: int, state: dict, page, adapter, field_id: str, val
         return {"field": field_id, "label": f["label"], "ok": False, "kept": f["value"],
                 "note": "The candidate already answered this in the window; their answer is kept. Change it only "
                         "if they ask you to (--force)."}
-    ok, note = fill(frame, f, value, root=ROOT, after=adapter.after_fill, custom=adapter.custom_fill)
+    key = _key(store, f)
+    try:
+        ok, note = fill(frame, f, value, root=ROOT, after=adapter.after_fill, custom=adapter.custom_fill)
+    except NoExactChoice as e:   # the agent's value is not one of the choices either: show them
+        return {"field": field_id, "label": f["label"], "ok": False,
+                "note": f"{value!r} is not one of the choices. Closest: {e.offered}"}
     after = {g["id"]: g for g in extract(frame, adapter.root_selector, read_options=False)}.get(f["id"])
     if after is not None:
-        typed[_key(store, f)] = after["value"]
+        typed[key] = after["value"]
     if ok:
-        store.record_answer(app_id, _key(store, f), f["label"], value, source="user", status="filled", fill="ok",
-                            section=f.get("section"), idx=f.get("index"))
-        store.note_fill(app_id, _key(store, f), "ok", value)   # clears any earlier failures
+        prior = next((a for a in store.answers(app_id) if a["field_key"] == key), None)
+        asked = state.setdefault("asked", {}).pop(key, None)
+        question_id = (asked or {}).get("question_id") or (prior or {}).get("question_id")
+        store.record_answer(app_id, key, f["label"], value, question_id=question_id, source="user", status="filled",
+                            fill="ok", section=f.get("section"), idx=f.get("index"))
+        store.note_fill(app_id, key, "ok", value)   # clears any earlier failures
+        if asked:   # the candidate told the agent which choice: remembered for this answer on other forms
+            store.remember_choice(asked["question_id"], asked["value"], after["value"] if after else value,
+                                  store.application(app_id)["company"])
     return {"field": field_id, "label": f["label"], "ok": ok, "note": note or None}
 
 

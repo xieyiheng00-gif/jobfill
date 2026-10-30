@@ -65,6 +65,20 @@ read the whole profile or the database; the context already holds the slices eac
   give the filler that path.
 - If the context cannot support an honest answer, do not invent: draft the rest, and put the open
   point as a numbered question in the review message (step 5).
+- `ai_context.relevant` is plain Python's pick of what this job is about in the candidate's real
+  background: `matched_skills` (stored skills and tools the posting names), `evidence` (the jobs,
+  projects and stories that use them, with their best lines), `angles` (posting line -> evidence) and
+  `company_lines` (what the posting says about the company). Build answers from these first; the
+  full `candidate` slices are for detail. If it has a `note` (no posting saved, nothing matches),
+  follow it instead of writing a generic answer.
+- `ai_task.examples: N` (why us, why this role, product / mission, what you know about us, why you are
+  leaving): write N different example answers, each on a different `relevant.angles` entry (its posting
+  line as the hook, its evidence as the proof), and check each with `answer check`. Do not record yet:
+  show them in ONE numbered message with each draft's word count and which experience it uses, and let
+  the candidate pick one, edit one, or give their own. A "why are you leaving" draft only frames
+  reasons the candidate stated or that follow from stored facts (graduating, an internship ending);
+  say so, and let them correct it. Then save and record the chosen text. If the candidate types their
+  own answer straight into the form instead, `apply fill` keeps it and records it as theirs.
 
 Save each answer to `data/answers/app<ID>_<question_id>.txt`, then check it in plain Python and fix
 every `fix` issue (over a limit, a placeholder, another company's name, a near-copy of an answer

@@ -51,6 +51,13 @@ must answer once, new questions to classify, and tier-3 answers that must be wri
 - Accounts: `jobfill/accounts.py` (secret.env, HMAC-SHA256 per-company passwords, login email),
   `jobfill/apply/login.py` (sign in / create / verify flow), `jobfill/mail.py` (optional IMAP reader).
   The `accounts` table holds no passwords. Login is tested only on `tests/fixtures/auth_like.html`.
+- Open motivation questions (why us / why this role / product / why leaving): `jobfill/relevance.py`
+  matches the stored skills, jobs, projects and stories to the saved posting (`ai_context.relevant`:
+  matched skills, evidence, angles, company lines); tasks with `examples` get that many drafts for the
+  candidate to pick from before anything is recorded.
+- Lists never get a look-alike: a stored name (school, field of study) with no exact option is left
+  empty and asked (`needs_user` with `set_with`). The candidate's pick, made in the window or through
+  `apply set`, goes to `learned_choices` and is reused where a later form offers it (`choice list`).
 - Result record: every question of an application is a row in `answers` (status, source, fill);
   `jobfill/report.py` turns it into `data/applications/app<ID>_*.md|json` and `app stats`.
 - Built-in catalog: `jobfill/catalog/` (`facts.py`, `records.py`, `choices.py`, `questions.py`).

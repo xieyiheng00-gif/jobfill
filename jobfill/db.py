@@ -155,6 +155,17 @@ CREATE TABLE IF NOT EXISTS accounts (
 );
 
 -- Questions seen in a form that the bank could not answer yet.
+-- What the candidate picked when a form had no option exactly matching a stored answer (a school, a field
+-- of study): reused on later forms whose list offers the same choice.
+CREATE TABLE IF NOT EXISTS learned_choices (
+    question_id  TEXT NOT NULL,
+    value        TEXT NOT NULL,            -- the stored answer, normalized
+    choice       TEXT NOT NULL,            -- the option picked for it, as the form wrote it
+    company      TEXT,                     -- where it was picked
+    updated_at   TEXT NOT NULL,
+    PRIMARY KEY (question_id, value, choice)
+);
+
 CREATE TABLE IF NOT EXISTS pending_questions (
     id            INTEGER PRIMARY KEY,
     label         TEXT NOT NULL,

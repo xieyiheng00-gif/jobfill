@@ -332,5 +332,78 @@ class TestWorkdayExperience(unittest.TestCase):
         self.assertEqual(self.entry(report, "Resume/CV")["fill"], "kept (already uploaded: resume_2026.pdf)")
 
 
+@unittest.skipUnless(importlib.util.find_spec("playwright"), "Playwright not installed")
+class TestNoExactChoiceLoop(unittest.TestCase):
+    """No option is exactly the stored answer (a non-US school, a field of study): jobfill asks; the candidate
+    answers in the window or through the agent; the pick is remembered and reused on the next application."""
+
+    @classmethod
+    def setUpClass(cls):
+        from playwright.sync_api import sync_playwright
+        cls.pw = sync_playwright().start()
+        cls.browser = cls.pw.chromium.launch()
+
+    @classmethod
+    def tearDownClass(cls):
+        cls.browser.close()
+        cls.pw.stop()
+
+    def setUp(self):
+        from jobfill.apply import runner
+        self.runner = runner
+        self.store = fresh_store(with_profile=True, owner=self)   # schools: UW-Madison, UNAM; fields: CS, CE
+        self.data = Path(tempfile.mkdtemp())
+        self.workday = adapters.get("workday")
+
+    def open(self, company):
+        page = self.browser.new_page()
+        self.addCleanup(page.close)
+        page.goto(EXPERIENCE + "#noce&school=dropdown")
+        return page, self.store.start_application(company, "Engineer", ats="workday"), {"pages": [], "typed": {}}
+
+    def fill(self, page, app, state, **kw):
+        return self.runner.fill_page(self.store, self.data, app, state, page, self.workday, files=False, **kw)
+
+    def asked(self, out):
+        return {q["label"]: q for q in out.get("needs_user", []) if q.get("set_with")}
+
+    def test_ask_then_remember_both_ways_and_reuse(self):
+        page, app, state = self.open("Acme")
+        out = self.fill(page, app, state, fresh=True)
+        schools = page.locator("[name=school]")
+        # Asked, not guessed: "University of Wisconsin" is a look-alike of "University of Wisconsin-Madison".
+        self.assertEqual([schools.nth(i).inner_text() for i in range(2)], ["Select One", "Select One"])
+        self.assertEqual(page.locator("[id$=--fieldOfStudy]").nth(1).evaluate(
+            "(e) => e.closest('[data-automation-id^=formField]').querySelectorAll('[data-automation-id=selectedItem]').length"), 0)
+        self.assertEqual(sum(1 for q in out["needs_user"] if q.get("set_with")), 3)
+        self.assertIn("University of Wisconsin", self.asked(out)["School or University*"]["choices"])
+
+        # 1. The candidate picks in the window: the second school and the second field of study.
+        schools.nth(1).click()
+        page.click("ul[role=listbox] li:has-text('Other')")
+        field = page.locator("[id$=--fieldOfStudy]").nth(1)
+        field.fill("Electrical")
+        field.press("Enter")
+        page.click("[data-automation-label='Electrical and Computer Engineering']")
+        self.fill(page, app, state)
+        # 2. The candidate tells the agent the first school: `apply set`.
+        school_id = schools.nth(0).get_attribute("data-jobfill-id")
+        self.assertTrue(self.runner.set_field(self.store, app, state, page, self.workday, school_id,
+                                              "University of Wisconsin")["ok"])
+        learned = {(c["question_id"], c["value"]): c["choice"] for c in self.store.all_learned_choices()}
+        self.assertEqual(learned, {("edu_school", "universidad nacional autonoma de mexico"): "Other",
+                                   ("edu_field", "computer engineering"): "Electrical and Computer Engineering",
+                                   ("edu_school", "university of wisconsin madison"): "University of Wisconsin"})
+
+        # The next application with the same lists: filled from memory, nothing asked.
+        page2, app2, state2 = self.open("Globex")
+        out2 = self.fill(page2, app2, state2, fresh=True)
+        self.assertEqual(self.asked(out2), {})
+        schools2 = page2.locator("[name=school]")
+        self.assertEqual([schools2.nth(i).inner_text() for i in range(2)], ["University of Wisconsin", "Other"])
+        self.assertIn("Electrical and Computer Engineering", page2.evaluate(
+            "() => Array.from(document.querySelectorAll('[data-automation-id=selectedItem]')).map((p) => p.title)"))
+
+
 if __name__ == "__main__":
     unittest.main()

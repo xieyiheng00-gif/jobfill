@@ -618,6 +618,39 @@ class Store:
                                   "AND NOT (? LIKE 'kept%' AND fill = 'ok')", (fill, app_id, field_key, fill))
         return attempts
 
+    # ------------------------------------------------------------------ learned choices
+    def remember_choice(self, question_id: str, value, choice, company: str | None = None) -> None:
+        """The candidate picked ``choice`` where no option was exactly the stored ``value``."""
+        if not question_id or value in (None, "") or choice in (None, "", []):
+            return
+        with self.conn:
+            self.conn.execute(
+                "INSERT INTO learned_choices (question_id, value, choice, company, updated_at) VALUES (?,?,?,?,?) "
+                "ON CONFLICT(question_id, value, choice) DO UPDATE SET company=excluded.company, "
+                "updated_at=excluded.updated_at",
+                (question_id, normalize(str(value)), str(choice), company, now()))
+
+    def learned_choices(self, question_id: str | None, value) -> list[str]:
+        """Choices picked before for this stored answer, the latest first."""
+        if not question_id or value in (None, ""):
+            return []
+        return [r["choice"] for r in self.conn.execute(
+            "SELECT choice FROM learned_choices WHERE question_id=? AND value=? ORDER BY updated_at DESC, rowid DESC",
+            (question_id, normalize(str(value))))]
+
+    def all_learned_choices(self) -> list[dict]:
+        return [dict(r) for r in self.conn.execute(
+            "SELECT question_id, value, choice, company, updated_at FROM learned_choices ORDER BY question_id, value")]
+
+    def forget_choices(self, question_id: str, value=None, choice: str | None = None) -> int:
+        sql, args = "DELETE FROM learned_choices WHERE question_id=?", [question_id]
+        if value is not None:
+            sql, args = sql + " AND value=?", args + [normalize(str(value))]
+        if choice is not None:
+            sql, args = sql + " AND choice=?", args + [choice]
+        with self.conn:
+            return self.conn.execute(sql, args).rowcount
+
     def answers(self, app_id: int) -> list[dict]:
         return [dict(r, value=json.loads(r["value"])) for r in self.conn.execute(
             "SELECT field_key, question_id, label, value, source, tier, status, fill, section, idx, attempts, created_at "

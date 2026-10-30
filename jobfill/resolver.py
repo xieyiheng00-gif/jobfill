@@ -24,11 +24,13 @@ import re
 from datetime import date
 
 from .catalog import CHECKLIST, PLAYBOOKS, RECORD_KINDS, STYLE, choice_set, playbook_for
+from . import relevance
 from .derive import RULES, Answer, Ctx, NeedFact, NeedUser, _degree_level, is_current, lacks_skill
 from .matcher import Matcher
 from .store import DATE_FIELDS
 from .text import (choose_date_option, choose_enum_option, choose_range_option, choose_text_option,
-                   classify_option, date_part, detect_date_format, format_date, normalize, option_label, parse_date)
+                   classify_option, closest_options, date_part, detect_date_format, format_date, names_same, normalize,
+                   option_label, parse_date)
 
 LONG_TEXT_CHARS = 200
 CATCH_ALL = {"open_ended_custom", "bh_generic"}
@@ -215,14 +217,21 @@ class Resolver:
         if q["category"] == "behavioral" and not themes:
             lab = normalize(field.get("label", ""))
             themes = {t for t, words in THEME_WORDS.items() if any(w in lab for w in words)}
-        return {"status": "needs_ai", "ai_task": {
+        task = {
             "question_id": q["id"], "question": field.get("label") or q["text"], "mode": ai["mode"],
             "scope": ai["scope"], "guidance": ai["guidance"], "playbook": playbook_for(ai, q["category"]),
             "deliverable": ai["deliverable"],
             "limits": limits, "context_keys": ai["context"], "themes": sorted(themes),
             "record_with": f"python -m jobfill answer record --app {self.app['id'] if self.app else '<id>'} "
                            f"--question {q['id']} --label \"<the question's label>\" --file <answer.txt>",
-        }}
+        }
+        if ai.get("examples"):
+            task["examples"] = ai["examples"]
+            task["examples_how"] = (f"Write {ai['examples']} different drafts, each built on a different entry of "
+                                    "`ai_context.relevant.angles` (its posting line and its evidence). Run `answer "
+                                    "check` on each, show them to the candidate to pick, edit or replace, and record "
+                                    "only the one they choose.")
+        return {"status": "needs_ai", "ai_task": task}
 
     def _missing_fact(self, nf: NeedFact, field: dict) -> dict:
         d = self.defs.get(nf.key, {})
@@ -254,11 +263,20 @@ class Resolver:
             return self._render_date(ans, field, out)
 
         if options:
-            picked = self._pick(value, options, choices, ans.kind, ftype)
+            picked = self._pick(value, options, choices, ans.kind, ftype, q["id"])
             if picked is None or picked == []:
                 vals = value if isinstance(value, list) else [value]
                 shown = ", ".join(_human(v, choices) if choices and choices != "bool" and isinstance(v, str) else str(v)
                                   for v in vals)
+                if not choices and isinstance(value, str):
+                    # A name (school, field of study) with no exact option: never a look-alike. The candidate
+                    # picks, in the window or by telling the agent, and that pick is remembered for other forms.
+                    near = closest_options(value, options)
+                    return {"status": "needs_user", "raw": value, "source": ans.source, "no_exact": True,
+                            "choices": near,
+                            "ask": f"No option for '{field.get('label')}' is exactly your stored answer ({shown}). "
+                                   f"Closest: {near}. Pick one in the window, or say which; it is remembered for "
+                                   "other forms."}
                 return {"status": "needs_user", "raw": value, "source": ans.source,
                         "ask": f"Your stored answer ({shown}) is not one of the options for '{field.get('label')}'. "
                                f"Which option should be selected? {[option_label(o) for o in options]}"}
@@ -277,6 +295,8 @@ class Resolver:
             out["value"] = str(int(value))
         else:
             out["value"] = str(value)
+        if field.get("picks") and isinstance(value, str) and (alts := self.store.learned_choices(q["id"], value)):
+            out["alternatives"] = alts   # a search-and-pick menu: what the candidate picked for it before
         if field.get("max_chars") and isinstance(out["value"], str) and len(out["value"]) > field["max_chars"]:
             out["warning"] = f"{len(out['value'])} chars exceeds limit {field['max_chars']}; trim before submitting"
         return out
@@ -318,7 +338,7 @@ class Resolver:
         out["value"] = text
         return out
 
-    def _pick(self, value, options, choices, kind, ftype):
+    def _pick(self, value, options, choices, kind, ftype, question_id=None):
         multi = ftype in ("multiselect", "checkbox") and len(options) > 1
         if choices:
             cs = choice_set(choices)
@@ -329,9 +349,21 @@ class Resolver:
         if isinstance(value, (int, float)) and not isinstance(value, bool):
             return choose_range_option(float(value), options) or choose_text_option(str(value), options)
         if isinstance(value, list):
-            picked = [p for v in value if (p := choose_text_option(str(v), options, kind)) is not None]
+            picked = [p for v in value if (p := self._exact(str(v), options, kind, question_id)) is not None]
             return picked if multi else (picked[0] if picked else None)
-        return choose_text_option(str(value), options, kind)
+        return self._exact(str(value), options, kind, question_id)
+
+    def _exact(self, value: str, options, kind, question_id):
+        """The option that is ``value`` (or it with a qualifier the form adds), else the one the candidate picked
+        for it on an earlier form. Never a look-alike: "University of Wisconsin" is not "...-Madison"."""
+        if kind in ("country", "state"):   # "USA" is "United States of America": known synonyms, not look-alikes
+            return choose_text_option(value, options, kind)
+        hit = next((o for o in options if names_same(option_label(o), value)), None)
+        for choice in ([] if hit is not None else self.store.learned_choices(question_id, value)):
+            hit = next((o for o in options if normalize(option_label(o)) == normalize(choice)), None)
+            if hit is not None:
+                break
+        return hit
 
     def _log(self, field: dict, res: dict) -> None:
         """Every question on the form goes into the application's record, answered or not."""
@@ -415,6 +447,9 @@ def build_ai_context(store, app: dict | None, keys: set[str], themes: set[str],
     if f("profile.writing_style"):
         cand["writing_style"] = f("profile.writing_style")
     ctx = {"candidate": cand, "rules": AI_RULES}
+    if "relevant" in keys:
+        # Python's pick of what this job is about in the candidate's background (see relevance.py).
+        ctx["relevant"] = relevance.match(store, app, today)
     if playbooks:
         # How to write: shared style, the technique per question type on this form, a check before recording.
         ctx["writing"] = {"style": STYLE, "playbooks": {p: PLAYBOOKS[p] for p in sorted(playbooks)},
